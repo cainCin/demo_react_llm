@@ -1,0 +1,244 @@
+# 💬 Chatbox App - React + Python LLM Chat Application
+
+A modern, full-stack chat application with a React frontend and Python FastAPI backend, integrated with LLM APIs for AI-powered conversations.
+
+## ✨ Features
+
+- 🎨 Beautiful, modern React UI with smooth animations
+- 🚀 FastAPI backend with async support
+- 🤖 LLM API integration (OpenAI GPT-3.5/GPT-4 or Azure OpenAI)
+- 🔒 No root permissions required for installation
+- 📱 Responsive design
+- ⚡ Fast development with Vite
+
+## 📋 Prerequisites
+
+- **Python 3.8+** (check with `python3 --version`)
+- **Node.js 16+** (check with `node --version`)
+- **npm** (comes with Node.js)
+- **OpenAI API Key** or **Azure OpenAI** credentials
+
+## 🚀 Quick Start
+
+### Option 1: Automated Installation (Recommended)
+
+```bash
+# Make install script executable
+chmod +x install.sh
+
+# Run installation
+./install.sh
+```
+
+### Option 2: Manual Installation
+
+#### Backend Setup
+
+```bash
+cd backend
+
+# Create virtual environment (no root required)
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Create .env file
+cp env.example .env
+
+# Edit .env and add your API key
+# For Standard OpenAI: OPENAI_API_KEY=your_api_key_here
+# For Azure OpenAI: See Configuration section below
+```
+
+#### Frontend Setup
+
+```bash
+cd frontend
+
+# Install dependencies (no root required)
+npm install
+```
+
+## 🎯 Running the Application
+
+### Option 1: Use Start Script
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+### Option 2: Manual Start
+
+**Terminal 1 - Backend:**
+```bash
+cd backend
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+python main.py
+```
+
+**Terminal 2 - Frontend:**
+```bash
+cd frontend
+npm run dev
+```
+
+The application will be available at:
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8000
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Edit `backend/.env`:
+
+#### Option 1: Standard OpenAI
+
+```env
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+#### Option 2: Azure OpenAI (Recommended)
+
+```env
+# Azure OpenAI Configuration
+AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/
+AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+AZURE_OPENAI_DEPLOYMENT_NAME=your-deployment-name
+```
+
+**How to get Azure OpenAI credentials:**
+1. Go to [Azure Portal](https://portal.azure.com/)
+2. Navigate to your Azure OpenAI resource
+3. Find your **Endpoint** URL (e.g., `https://my-resource.openai.azure.com/`)
+4. Go to **Keys and Endpoint** to get your **API Key**
+5. Go to **Deployments** to see your deployment names
+6. Use the deployment name you created (e.g., `gpt-35-turbo-deployment`)
+
+**Note:** The application automatically detects Azure OpenAI if `AZURE_OPENAI_ENDPOINT` is set. If both are configured, Azure OpenAI takes precedence.
+
+### API Configuration
+
+The backend supports both standard OpenAI and Azure OpenAI. You can modify `backend/main.py` to:
+- Change the default model
+- Adjust temperature and max_tokens
+- Add support for other LLM providers
+
+## 📁 Project Structure
+
+```
+chatbox-app/
+├── backend/
+│   ├── main.py              # FastAPI application
+│   ├── requirements.txt     # Python dependencies
+│   ├── env.example          # Environment variables template
+│   └── .env                 # Your environment variables (create this)
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx          # Main React component
+│   │   ├── App.css          # Styles
+│   │   ├── main.jsx         # React entry point
+│   │   └── index.css        # Global styles
+│   ├── index.html           # HTML template
+│   ├── package.json         # Node.js dependencies
+│   └── vite.config.js       # Vite configuration
+├── install.sh               # Installation script
+├── start.sh                 # Start script
+└── README.md               # This file
+```
+
+## 🛠️ Development
+
+### Backend Development
+
+```bash
+cd backend
+source venv/bin/activate
+python main.py
+```
+
+The API will be available at `http://localhost:8000`
+- Health check: `http://localhost:8000/`
+- API docs: `http://localhost:8000/docs` (Swagger UI)
+- Chat endpoint: `POST http://localhost:8000/api/chat`
+
+### Frontend Development
+
+```bash
+cd frontend
+npm run dev
+```
+
+Hot module replacement is enabled for fast development.
+
+### Building for Production
+
+```bash
+cd frontend
+npm run build
+```
+
+The production build will be in `frontend/dist/`.
+
+## 🔌 API Endpoints
+
+### POST `/api/chat`
+
+Send a chat message to the LLM.
+
+**Request:**
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ],
+  "model": "gpt-3.5-turbo"
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Hello! How can I help you?",
+  "model": "gpt-3.5-turbo"
+}
+```
+
+## 🐛 Troubleshooting
+
+### Backend Issues
+
+- **"OpenAI API key not configured"**: Make sure you've created `backend/.env` and added your `OPENAI_API_KEY`
+- **Port 8000 already in use**: Change the port in `backend/main.py` (uvicorn.run port parameter)
+
+### Frontend Issues
+
+- **"Cannot connect to backend"**: Make sure the backend is running on port 8000
+- **Port 3000 already in use**: Change the port in `frontend/vite.config.js`
+
+### Installation Issues
+
+- **"python3: command not found"**: Install Python 3.8 or higher
+- **"node: command not found"**: Install Node.js 16 or higher from https://nodejs.org/
+- **Permission denied**: The installation doesn't require root. Make sure you have write permissions in the project directory
+
+## 📝 License
+
+This project is open source and available for personal and commercial use.
+
+## 🤝 Contributing
+
+Feel free to submit issues and enhancement requests!
+
+## 📧 Support
+
+For issues or questions, please open an issue on the repository.
+
+
