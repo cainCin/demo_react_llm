@@ -3,11 +3,16 @@ FastAPI backend for chatbox application with LLM integration
 """
 import os
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI, AzureOpenAI
+from rag_system import RAGSystem
+from config import (
+    RAG_ENABLED, LLM_TEMPERATURE, LLM_MAX_TOKENS, MAX_FILE_SIZE,
+    EMBEDDING_MODEL, RAG_TOP_K, CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_DIM
+)
 
 # Load environment variables
 load_dotenv()
@@ -17,7 +22,7 @@ app = FastAPI(title="Chatbox API", version="1.0.0")
 # CORS middleware to allow React frontend to connect
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],  # React dev servers
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,9 +40,6 @@ use_azure = False
 if azure_endpoint and openai_api_key:
     # Use Azure OpenAI
     use_azure = True
-    
-    # Initialize Azure OpenAI client using AzureOpenAI class
-    # Azure OpenAI requires: api_key, api_version, and azure_endpoint
     openai_client = AzureOpenAI(
         api_key=openai_api_key,
         api_version=azure_api_version,
@@ -45,7 +47,7 @@ if azure_endpoint and openai_api_key:
     )
     print(f"✅ Initialized Azure OpenAI client")
     print(f"   Endpoint: {azure_endpoint}")
-    print(f"   Deployment: {azure_deployment or 'Not specified (will use model parameter)'}")
+    print(f"   Deployment: {azure_deployment or 'Not specified (using model parameter)'}")
     print(f"   API Version: {azure_api_version}")
 elif openai_api_key:
     # Use standard OpenAI
@@ -53,6 +55,36 @@ elif openai_api_key:
     print("✅ Initialized standard OpenAI client")
 else:
     print("⚠️  No OpenAI API key configured")
+
+# Initialize RAG system (optional, can be disabled)
+rag_system = None
+
+if RAG_ENABLED and openai_client:
+    try:
+        # Determine embedding model based on provider
+        embedding_model = EMBEDDING_MODEL
+        if use_azure:
+            # Azure OpenAI uses different model names or deployment names
+            embedding_model = os.getenv("AZURE_EMBEDDING_MODEL", EMBEDDING_MODEL)
+            # If using deployment name for embeddings
+            azure_embedding_deployment = os.getenv("AZURE_EMBEDDING_DEPLOYMENT_NAME")
+            if azure_embedding_deployment:
+                embedding_model = azure_embedding_deployment
+        
+        rag_system = RAGSystem(openai_client, embedding_model=embedding_model, use_azure=use_azure)
+        print("✅ RAG system initialized")
+        print(f"   Chunk size: {CHUNK_SIZE}, Overlap: {CHUNK_OVERLAP}")
+        print(f"   Embedding model: {embedding_model}, Dimension: {EMBEDDING_DIM}")
+        print(f"   Top-K retrieval: {RAG_TOP_K}")
+    except Exception as e:
+        print(f"⚠️  Failed to initialize RAG system: {e}")
+        print("   Continuing without RAG (files will still be processed)")
+        rag_system = None
+else:
+    if not RAG_ENABLED:
+        print("ℹ️  RAG system disabled (set RAG_ENABLED=true to enable)")
+    else:
+        print("ℹ️  RAG system not initialized (OpenAI client required)")
 
 
 class Message(BaseModel):
@@ -80,7 +112,21 @@ async def root():
 @app.get("/api/health")
 async def health():
     """Health check endpoint accessible through proxy"""
-    return {"status": "ok", "message": "Chatbox API is running"}
+    return {
+        "status": "ok",
+        "message": "Chatbox API is running",
+        "rag_enabled": rag_system is not None
+    }
+
+
+@app.get("/health")
+async def health_direct():
+    """Health check endpoint (direct access)"""
+    return {
+        "status": "ok",
+        "message": "Chatbox API is running",
+        "rag_enabled": rag_system is not None
+    }
 
 
 def extract_text_from_file(file_content: bytes, filename: str) -> str:
@@ -102,10 +148,6 @@ def extract_text_from_file(file_content: bytes, filename: str) -> str:
                 return f"[Unable to decode file: {filename}]"
     
     # For other file types, return a placeholder
-    # In a production app, you might want to add support for:
-    # - PDF (using PyPDF2 or pdfplumber)
-    # - DOCX (using python-docx)
-    # - Images (using OCR)
     return f"[File: {filename} - Content extraction not supported for .{file_ext} files. Please convert to text format.]"
 
 
@@ -113,27 +155,39 @@ def extract_text_from_file(file_content: bytes, filename: str) -> str:
 async def upload_file(file: UploadFile = File(...)):
     """
     Upload and process a file, returning its text content
+    If RAG is enabled, also stores the document in the RAG system
     """
     try:
         # Read file content
         file_content = await file.read()
         
-        # Check file size (limit to 10MB)
-        max_size = 10 * 1024 * 1024  # 10MB
-        if len(file_content) > max_size:
+        # Check file size
+        if len(file_content) > MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
-                detail=f"File too large. Maximum size is 10MB."
+                detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024*1024):.1f}MB."
             )
         
         # Extract text content
         text_content = extract_text_from_file(file_content, file.filename)
         
+        # Store in RAG system if enabled
+        document_id = None
+        if rag_system:
+            try:
+                document_id = rag_system.store_document(file.filename, text_content)
+                print(f"✅ Document stored in RAG: {file.filename}")
+            except Exception as e:
+                print(f"⚠️  Failed to store document in RAG: {e}")
+                # Continue without RAG storage
+        
         return {
             "filename": file.filename,
             "size": len(file_content),
             "content": text_content,
-            "content_type": file.content_type
+            "content_type": file.content_type,
+            "document_id": document_id,
+            "rag_stored": document_id is not None
         }
     
     except HTTPException:
@@ -145,24 +199,98 @@ async def upload_file(file: UploadFile = File(...)):
         )
 
 
+@app.get("/api/documents")
+async def list_documents():
+    """List all stored documents (RAG system only)"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    from rag_system import Document
+    from sqlalchemy.orm import Session
+    
+    db: Session = rag_system.SessionLocal()
+    try:
+        documents = db.query(Document).order_by(Document.created_at.desc()).all()
+        return {
+            "documents": [
+                {
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "chunk_count": doc.chunk_count,
+                    "created_at": doc.created_at.isoformat()
+                }
+                for doc in documents
+            ]
+        }
+    finally:
+        db.close()
+
+
+@app.delete("/api/documents/{document_id}")
+async def delete_document(document_id: str):
+    """Delete a document and all its chunks (RAG system only)"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        rag_system.delete_document(document_id)
+        return {"status": "ok", "message": f"Document {document_id} deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
     Chat endpoint that sends messages to LLM API and returns response
+    Uses RAG system to retrieve relevant context if enabled
     """
     if not openai_client:
-        error_msg = "OpenAI API key not configured."
-        if not azure_endpoint:
-            error_msg += " Please set OPENAI_API_KEY in .env file"
-        else:
-            error_msg += " Please set OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT in .env file"
-        raise HTTPException(status_code=500, detail=error_msg)
+        raise HTTPException(
+            status_code=500,
+            detail="OpenAI API key not configured. Please set OPENAI_API_KEY in .env file"
+        )
     
     try:
-        # Convert messages to OpenAI format, including file attachments
+        # Get the last user message for RAG retrieval
+        last_user_message = None
+        for msg in reversed(request.messages):
+            if msg.role == "user":
+                last_user_message = msg
+                break
+        
+        # Retrieve relevant context from RAG if enabled
+        rag_context = ""
+        if rag_system and last_user_message:
+            try:
+                # Search for similar chunks
+                query_text = last_user_message.content
+                if last_user_message.attachments:
+                    # Include attachment content in query
+                    for attachment in last_user_message.attachments:
+                        query_text += " " + attachment.get('content', '')[:500]  # Limit query size
+                
+                similar_chunks = rag_system.search_similar(query_text, top_k=RAG_TOP_K)
+                
+                if similar_chunks:
+                    # Build context from retrieved chunks
+                    context_parts = ["[Relevant context from documents:]"]
+                    for chunk in similar_chunks:
+                        context_parts.append(f"\n---\n{chunk['text']}")
+                    rag_context = "\n".join(context_parts)
+                    print(f"✅ Retrieved {len(similar_chunks)} relevant chunks from RAG")
+            except Exception as e:
+                print(f"⚠️  RAG retrieval error: {e}")
+                # Continue without RAG context
+        
+        # Convert messages to OpenAI format, including file attachments and RAG context
         messages = []
         for msg in request.messages:
             content_parts = [msg.content]
+            
+            # Add RAG context to the last user message
+            if msg.role == "user" and msg == last_user_message and rag_context:
+                content_parts.append(f"\n\n{rag_context}")
             
             # Add file attachments to the message content
             if msg.attachments:
@@ -181,21 +309,18 @@ async def chat(request: ChatRequest):
         if use_azure:
             # For Azure OpenAI, use deployment name if provided, otherwise use model parameter
             if azure_deployment:
-                # Use deployment name (required for Azure OpenAI)
                 model_to_use = azure_deployment
             elif not model_to_use:
-                # Default Azure model name (Azure uses different naming)
-                model_to_use = "gpt-35-turbo"
+                model_to_use = "gpt-35-turbo"  # Azure naming convention
         elif not model_to_use:
-            # Standard OpenAI default
-            model_to_use = "gpt-3.5-turbo"
+            model_to_use = "gpt-3.5-turbo"  # Standard OpenAI default
         
         # Prepare API call parameters
         api_params = {
             "model": model_to_use,
             "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 500
+            "temperature": LLM_TEMPERATURE,
+            "max_tokens": LLM_MAX_TOKENS
         }
         
         # Make the API call

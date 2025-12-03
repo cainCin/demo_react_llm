@@ -90,41 +90,46 @@
   padding: 12px 20px;
 }
 
-.typing-indicator {
+.message-attachments {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message.user .message-attachments {
+  border-top-color: rgba(255, 255, 255, 0.3);
+}
+
+.message.assistant .message-attachments {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+.attachment-item {
+  display: flex;
   align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
 }
 
-.typing-indicator span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #667eea;
-  animation: typing 1.4s infinite ease-in-out;
+.message.assistant .attachment-item {
+  color: rgba(0, 0, 0, 0.7);
 }
 
-.typing-indicator span:nth-child(1) {
-  animation-delay: 0s;
+.attachment-icon {
+  font-size: 14px;
 }
 
-.typing-indicator span:nth-child(2) {
-  animation-delay: 0.2s;
+.attachment-name {
+  font-weight: 500;
 }
 
-.typing-indicator span:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes typing {
-  0%, 60%, 100% {
-    transform: translateY(0);
-    opacity: 0.7;
-  }
-  30% {
-    transform: translateY(-10px);
-    opacity: 1;
-  }
+.attachment-size {
+  opacity: 0.7;
+  font-size: 12px;
 }
 
 .attached-files-preview {
@@ -184,34 +189,41 @@
   color: #e74c3c;
 }
 
-.message-attachments {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
+.typing-indicator {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.attachment-item {
-  display: flex;
+  gap: 4px;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.7);
 }
 
-.attachment-icon {
-  font-size: 14px;
+.typing-indicator span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #667eea;
+  animation: typing 1.4s infinite ease-in-out;
 }
 
-.attachment-name {
-  font-weight: 500;
+.typing-indicator span:nth-child(1) {
+  animation-delay: 0s;
 }
 
-.attachment-size {
-  color: rgba(0, 0, 0, 0.5);
-  font-size: 12px;
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.7;
+  }
+  30% {
+    transform: translateY(-10px);
+    opacity: 1;
+  }
 }
 
 .chatbox-input-form {

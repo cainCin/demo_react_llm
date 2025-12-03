@@ -161,7 +161,7 @@ function App() {
         <p>Powered by LLM API</p>
         {backendConnected === false && (
           <p style={{ fontSize: '12px', marginTop: '5px', opacity: 0.9 }}>
-            ⚠️ Backend not connected. Make sure backend is running on port 8000.
+            ⚠️ Backend not connected. Make sure the backend server is running on port 8000.
           </p>
         )}
         {backendConnected === true && (
@@ -232,6 +232,7 @@ function App() {
           disabled={isLoading || isUploading}
           className="file-input-hidden"
           id="file-input"
+          accept=".txt,.md,.json,.csv,.log,.py,.js,.html,.css,.xml,.yaml,.yml"
         />
         <label htmlFor="file-input" className="file-upload-button" title="Attach file">
           {isUploading ? '⏳' : '📎'}

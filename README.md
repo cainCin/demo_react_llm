@@ -6,7 +6,7 @@ A modern, full-stack chat application with a React frontend and Python FastAPI b
 
 - 🎨 Beautiful, modern React UI with smooth animations
 - 🚀 FastAPI backend with async support
-- 🤖 LLM API integration (OpenAI GPT-3.5/GPT-4 or Azure OpenAI)
+- 🤖 LLM API integration (OpenAI GPT-3.5/GPT-4)
 - 🔒 No root permissions required for installation
 - 📱 Responsive design
 - ⚡ Fast development with Vite
@@ -16,7 +16,7 @@ A modern, full-stack chat application with a React frontend and Python FastAPI b
 - **Python 3.8+** (check with `python3 --version`)
 - **Node.js 16+** (check with `node --version`)
 - **npm** (comes with Node.js)
-- **OpenAI API Key** or **Azure OpenAI** credentials
+- **OpenAI API Key** (or other LLM API key)
 
 ## 🚀 Quick Start
 
@@ -51,8 +51,7 @@ pip install -r requirements.txt
 cp env.example .env
 
 # Edit .env and add your API key
-# For Standard OpenAI: OPENAI_API_KEY=your_api_key_here
-# For Azure OpenAI: See Configuration section below
+# OPENAI_API_KEY=your_api_key_here
 ```
 
 #### Frontend Setup
@@ -98,38 +97,16 @@ The application will be available at:
 
 Edit `backend/.env`:
 
-#### Option 1: Standard OpenAI
-
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
 ```
 
-#### Option 2: Azure OpenAI (Recommended)
-
-```env
-# Azure OpenAI Configuration
-AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/
-AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here
-AZURE_OPENAI_API_VERSION=2024-02-15-preview
-AZURE_OPENAI_DEPLOYMENT_NAME=your-deployment-name
-```
-
-**How to get Azure OpenAI credentials:**
-1. Go to [Azure Portal](https://portal.azure.com/)
-2. Navigate to your Azure OpenAI resource
-3. Find your **Endpoint** URL (e.g., `https://my-resource.openai.azure.com/`)
-4. Go to **Keys and Endpoint** to get your **API Key**
-5. Go to **Deployments** to see your deployment names
-6. Use the deployment name you created (e.g., `gpt-35-turbo-deployment`)
-
-**Note:** The application automatically detects Azure OpenAI if `AZURE_OPENAI_ENDPOINT` is set. If both are configured, Azure OpenAI takes precedence.
-
 ### API Configuration
 
-The backend supports both standard OpenAI and Azure OpenAI. You can modify `backend/main.py` to:
+The backend uses OpenAI's API by default. You can modify `backend/main.py` to:
+- Use different LLM providers (Anthropic, local models, etc.)
 - Change the default model
 - Adjust temperature and max_tokens
-- Add support for other LLM providers
 
 ## 📁 Project Structure
 
