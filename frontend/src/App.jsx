@@ -15,6 +15,9 @@ function App() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [backendConnected, setBackendConnected] = useState(null)
+  const [attachedFiles, setAttachedFiles] = useState([])
+  const [isUploading, setIsUploading] = useState(false)
+  const fileInputRef = useRef(null)
   const messagesEndRef = useRef(null)
 
   const scrollToBottom = () => {
@@ -45,13 +48,70 @@ function App() {
     checkBackend()
   }, [])
 
+  const handleFileSelect = async (e) => {
+    const files = Array.from(e.target.files)
+    if (files.length === 0) return
+
+    setIsUploading(true)
+    const uploadedFiles = []
+
+    try {
+      for (const file of files) {
+        // Check file size (10MB limit)
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`File ${file.name} is too large. Maximum size is 10MB.`)
+          continue
+        }
+
+        const formData = new FormData()
+        formData.append('file', file)
+
+        const uploadUrl = API_URL ? `${API_URL}/api/upload` : '/api/upload'
+        const uploadResponse = await axios.post(uploadUrl, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+          timeout: 30000,
+        })
+
+        uploadedFiles.push({
+          filename: uploadResponse.data.filename,
+          content: uploadResponse.data.content,
+          size: uploadResponse.data.size,
+          content_type: uploadResponse.data.content_type
+        })
+      }
+
+      setAttachedFiles(prev => [...prev, ...uploadedFiles])
+    } catch (error) {
+      console.error('Error uploading file:', error)
+      alert(`Error uploading file: ${error.response?.data?.detail || error.message}`)
+    } finally {
+      setIsUploading(false)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
+  const removeFile = (index) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
   const sendMessage = async (e) => {
     e.preventDefault()
-    if (!input.trim() || isLoading) return
+    if ((!input.trim() && attachedFiles.length === 0) || isLoading) return
 
-    const userMessage = { role: 'user', content: input.trim() }
+    const userMessage = {
+      role: 'user',
+      content: input.trim() || '[No text message]',
+      attachments: attachedFiles.length > 0 ? attachedFiles : undefined
+    }
+    
     setMessages(prev => [...prev, userMessage])
     setInput('')
+    setAttachedFiles([])
     setIsLoading(true)
 
     try {
@@ -116,6 +176,17 @@ function App() {
           <div key={idx} className={`message ${msg.role}`}>
             <div className="message-content">
               {msg.content}
+              {msg.attachments && msg.attachments.length > 0 && (
+                <div className="message-attachments">
+                  {msg.attachments.map((file, fileIdx) => (
+                    <div key={fileIdx} className="attachment-item">
+                      <span className="attachment-icon">📎</span>
+                      <span className="attachment-name">{file.filename}</span>
+                      <span className="attachment-size">({(file.size / 1024).toFixed(1)} KB)</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -133,7 +204,38 @@ function App() {
         <div ref={messagesEndRef} />
       </div>
 
+      {attachedFiles.length > 0 && (
+        <div className="attached-files-preview">
+          {attachedFiles.map((file, idx) => (
+            <div key={idx} className="attached-file-item">
+              <span className="file-icon">📎</span>
+              <span className="file-name">{file.filename}</span>
+              <button
+                type="button"
+                onClick={() => removeFile(idx)}
+                className="remove-file-button"
+                title="Remove file"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      
       <form className="chatbox-input-form" onSubmit={sendMessage}>
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileSelect}
+          multiple
+          disabled={isLoading || isUploading}
+          className="file-input-hidden"
+          id="file-input"
+        />
+        <label htmlFor="file-input" className="file-upload-button" title="Attach file">
+          {isUploading ? '⏳' : '📎'}
+        </label>
         <input
           type="text"
           value={input}
@@ -144,7 +246,7 @@ function App() {
         />
         <button
           type="submit"
-          disabled={isLoading || !input.trim()}
+          disabled={isLoading || (!input.trim() && attachedFiles.length === 0)}
           className="chatbox-send-button"
         >
           {isLoading ? '⏳' : '➤'}

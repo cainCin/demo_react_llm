@@ -127,12 +127,131 @@
   }
 }
 
+.attached-files-preview {
+  padding: 10px 20px;
+  background: #f8f9fa;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.attached-file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  font-size: 13px;
+  max-width: 200px;
+}
+
+.file-icon {
+  font-size: 14px;
+}
+
+.file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #333;
+}
+
+.remove-file-button {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.remove-file-button:hover {
+  background: #f0f0f0;
+  color: #e74c3c;
+}
+
+.message-attachments {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.attachment-icon {
+  font-size: 14px;
+}
+
+.attachment-name {
+  font-weight: 500;
+}
+
+.attachment-size {
+  color: rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+}
+
 .chatbox-input-form {
   display: flex;
   padding: 20px;
   background: white;
   border-top: 1px solid #e0e0e0;
   gap: 10px;
+  align-items: center;
+}
+
+.file-input-hidden {
+  display: none;
+}
+
+.file-upload-button {
+  width: 50px;
+  height: 50px;
+  border: 2px solid #e0e0e0;
+  border-radius: 50%;
+  background: white;
+  color: #667eea;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.file-upload-button:hover:not(:disabled) {
+  border-color: #667eea;
+  background: #f8f9ff;
+  transform: scale(1.05);
+}
+
+.file-upload-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .chatbox-input {
