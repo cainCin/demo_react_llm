@@ -52,6 +52,12 @@ MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", str(10 * 1024 * 1024)))  # 10MB d
 # PostgreSQL
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+
+# ============================================
+# Session Configuration
+# ============================================
+
+SESSIONS_DIR = os.getenv("SESSIONS_DIR", "./sessions")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "chatbox_rag")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")

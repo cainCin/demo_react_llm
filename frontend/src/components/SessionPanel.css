@@ -1,0 +1,196 @@
+.session-panel {
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  min-width: 250px;
+  max-width: 350px;
+  height: 100%;
+  background: var(--color-background, #ffffff);
+  border-right: 1px solid var(--color-border, #e0e0e0);
+  overflow: hidden;
+}
+
+.session-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: var(--color-backgroundSecondary, #f8f9fa);
+  border-bottom: 1px solid var(--color-border, #e0e0e0);
+}
+
+.session-panel-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text, #333);
+}
+
+.new-session-button {
+  padding: 6px 12px;
+  border: 1px solid var(--color-primary, #667eea);
+  border-radius: 6px;
+  background: var(--color-primary, #667eea);
+  color: var(--color-textInverse, #ffffff);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.new-session-button:hover {
+  background: var(--color-primaryDark, #5568d3);
+  border-color: var(--color-primaryDark, #5568d3);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px var(--color-shadowLight, rgba(0, 0, 0, 0.1));
+}
+
+.session-panel-error {
+  padding: 8px 16px;
+  background: var(--color-errorLight, rgba(231, 76, 60, 0.1));
+  color: var(--color-error, #e74c3c);
+  font-size: 12px;
+  border-bottom: 1px solid var(--color-border, #e0e0e0);
+}
+
+.session-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.session-panel-loading,
+.session-panel-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--color-textSecondary, #666);
+}
+
+.session-panel-empty .empty-hint {
+  font-size: 12px;
+  margin-top: 8px;
+  opacity: 0.7;
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+}
+
+.session-item {
+  padding: 12px;
+  background: var(--color-background, #ffffff);
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.session-item:hover {
+  border-color: var(--color-primary, #667eea);
+  box-shadow: 0 2px 4px var(--color-shadowLight, rgba(0, 0, 0, 0.05));
+  transform: translateX(2px);
+}
+
+.session-item.active {
+  border-color: var(--color-primary, #667eea);
+  background: var(--color-primaryLight, rgba(102, 126, 234, 0.05));
+  box-shadow: 0 2px 8px var(--color-shadowLight, rgba(102, 126, 234, 0.2));
+}
+
+.session-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.session-item-title {
+  flex: 1;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--color-text, #333);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.session-delete-button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-textSecondary, #999);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  opacity: 0.6;
+}
+
+.session-delete-button:hover {
+  background: var(--color-errorLight, rgba(231, 76, 60, 0.1));
+  color: var(--color-error, #e74c3c);
+  opacity: 1;
+}
+
+.session-item-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--color-textSecondary, #666);
+  gap: 8px;
+}
+
+.session-message-count {
+  font-weight: 500;
+}
+
+.session-date {
+  opacity: 0.8;
+}
+
+.session-active-indicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 6px;
+  background: var(--color-primary, #667eea);
+  color: var(--color-textInverse, #ffffff);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Scrollbar styling */
+.session-panel-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.session-panel-content::-webkit-scrollbar-track {
+  background: var(--color-backgroundSecondary, #f8f9fa);
+  border-radius: 3px;
+}
+
+.session-panel-content::-webkit-scrollbar-thumb {
+  background: var(--color-border, #e0e0e0);
+  border-radius: 3px;
+}
+
+.session-panel-content::-webkit-scrollbar-thumb:hover {
+  background: var(--color-textSecondary, #999);
+}
+

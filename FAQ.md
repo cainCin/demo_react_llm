@@ -231,6 +231,37 @@ python -c "from rag_system import RAGSystem; from openai import OpenAI; import o
 
 ---
 
+#### Error: `Session {session_id} does not exist`
+
+**Symptoms:**
+```
+ValueError: Session <session_id> does not exist. Log file: sessions/logs/<session_id>.csv
+```
+
+**Solution:**
+- The system automatically creates missing session files when needed
+- If error persists, check file permissions on `sessions/` directory
+- Verify session ID is valid UUID format
+
+**Prevention:** Session files are auto-created. Ensure `sessions/` directory is writable.
+
+---
+
+#### Error: Chunk text not available when loading session
+
+**Symptoms:**
+- Session loads but chunks show "[Chunk text not available]"
+- Chunk viewer shows loading message
+
+**Solution:**
+1. Click on the chunk to trigger on-demand loading from database
+2. Verify chunk exists in PostgreSQL: `SELECT * FROM chunks WHERE id = 'chunk-id'`
+3. Check if chunk was deleted from database after session was created
+
+**Prevention:** Chunks are fetched from database when clicked. Ensure chunks aren't deleted while sessions reference them.
+
+---
+
 #### Error: `NameError: name 'VerificationResult' is not defined`
 
 **Symptoms:**
@@ -445,6 +476,7 @@ docker exec -it chatbox-postgres psql -U chatbox_user -d chatbox_db -c "SELECT C
 ## 📚 Additional Resources
 
 - **Backend API Docs:** http://localhost:8000/docs (Swagger UI)
+- **Feature Documentation:** `FEATURES.md` - Session management, chunk selection, chunk viewer
 - **Database Documentation:** `backend/database/README.md`
 - **Suggestion System:** `frontend/SUGGESTION_SYSTEM.md`
 - **Theme System:** `frontend/src/themes/README.md`

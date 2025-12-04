@@ -1,5 +1,7 @@
 # 💬 Chatbox App - React + Python LLM Chat Application
 
+> **Note**: This project uses Cursor IDE with `.cursorrules` for automated convention checking. See [CONVENTIONS.md](CONVENTIONS.md) for detailed development guidelines.
+
 A modern, full-stack chat application with a React frontend and Python FastAPI backend, integrated with LLM APIs for AI-powered conversations.
 
 ## ✨ Features
@@ -8,6 +10,9 @@ A modern, full-stack chat application with a React frontend and Python FastAPI b
 - 🚀 FastAPI backend with async support
 - 🤖 LLM API integration (OpenAI GPT-3.5/GPT-4, Azure OpenAI)
 - 📄 RAG (Retrieval-Augmented Generation) system with PostgreSQL and Milvus Lite
+- 💾 **Session Management**: Save, load, and manage chat conversations with unique session IDs
+- 🔍 **Reference Chunk Selection**: Select/deselect context chunks to improve LLM responses
+- 📄 **Chunk Viewer**: View full chunk content in a dedicated side panel
 - 🔍 Extensible suggestion system with YAML configuration (@ mentions, etc.)
 - 🎨 Multiple themes (Light, Dark, Ocean, Forest, Sunset, Purple)
 - 🔒 No root permissions required for installation
@@ -128,6 +133,10 @@ chatbox-app/
 │   ├── env.example          # Environment variables template
 │   ├── .env                 # Your environment variables (create this)
 │   ├── rag_system.py        # RAG system implementation
+│   ├── session_manager.py   # Session management logic
+│   ├── sessions/            # Session storage directory
+│   │   ├── logs/            # Message logs (CSV)
+│   │   └── chunks/          # Chunk logs (CSV)
 │   └── database/            # Database management package
 │       ├── database_manager.py
 │       ├── models.py
@@ -138,6 +147,9 @@ chatbox-app/
 │   │   ├── App.css          # Styles
 │   │   ├── main.jsx         # React entry point
 │   │   ├── components/      # React components
+│   │   │   ├── SessionPanel.jsx    # Session management panel
+│   │   │   ├── ContextChunks.jsx   # Chunk selection component
+│   │   │   └── ChunkViewer.jsx     # Chunk viewer component
 │   │   ├── contexts/        # React contexts (Theme, etc.)
 │   │   ├── services/        # API services
 │   │   ├── themes/          # Theme configurations
@@ -150,7 +162,9 @@ chatbox-app/
 │   └── vite.config.js       # Vite configuration
 ├── install.sh               # Installation script
 ├── start.sh                 # Start script
-└── README.md               # This file
+├── README.md               # This file
+├── FEATURES.md             # Feature documentation
+└── FAQ.md                  # Frequently asked questions
 ```
 
 ## 🛠️ Development
@@ -198,7 +212,8 @@ Send a chat message to the LLM.
   "messages": [
     {"role": "user", "content": "Hello!"}
   ],
-  "model": "gpt-3.5-turbo"
+  "session_id": "optional-session-id",
+  "selected_chunks": ["chunk-id-1", "chunk-id-2"]
 }
 ```
 
@@ -206,9 +221,26 @@ Send a chat message to the LLM.
 ```json
 {
   "message": "Hello! How can I help you?",
-  "model": "gpt-3.5-turbo"
+  "model": "gpt-3.5-turbo",
+  "chunks": [...],
+  "session_id": "uuid-here",
+  "message_id": "msg-123"
 }
 ```
+
+### Session Management
+
+- `POST /api/sessions` - Create a new session
+- `GET /api/sessions` - List all sessions
+- `GET /api/sessions/{session_id}` - Get session messages and chunks
+- `PUT /api/sessions/{session_id}/title` - Update session title
+- `DELETE /api/sessions/{session_id}` - Delete a session
+
+### Chunk Management
+
+- `GET /api/chunks/{chunk_id}` - Get chunk content by ID
+
+**For detailed API documentation, see [FEATURES.md](FEATURES.md) or visit http://localhost:8000/docs**
 
 ## 🐛 Troubleshooting
 
@@ -264,11 +296,20 @@ This project is open source and available for personal and commercial use.
 
 Feel free to submit issues and enhancement requests!
 
+## 📚 Feature Documentation
+
+For detailed documentation on key features:
+- **Session Management**: See [FEATURES.md](FEATURES.md#session-management)
+- **Reference Chunk Selection**: See [FEATURES.md](FEATURES.md#reference-chunk-selection)
+- **Chunk Viewer**: See [FEATURES.md](FEATURES.md#chunk-viewer)
+- **API Reference**: See [FEATURES.md](FEATURES.md#api-reference)
+
 ## 📧 Support
 
 For issues or questions:
 - **Common errors and solutions**: See [FAQ.md](FAQ.md)
 - **Installation help**: See [INSTALLATION.md](INSTALLATION.md)
+- **Feature documentation**: See [FEATURES.md](FEATURES.md)
 - **Open an issue**: On the repository for bugs or feature requests
 
 

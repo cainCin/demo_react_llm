@@ -2,17 +2,19 @@
 FastAPI backend for chatbox application with LLM integration
 """
 import os
-from typing import List, Optional
-from fastapi import FastAPI, HTTPException, UploadFile, File
+import uuid
+from typing import List, Optional, Dict
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI, AzureOpenAI
 from rag_system import RAGSystem
+from session_manager import SessionManager
 from config import (
     RAG_ENABLED, LLM_TEMPERATURE, LLM_MAX_TOKENS, MAX_FILE_SIZE,
     EMBEDDING_MODEL, RAG_TOP_K, CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_DIM,
-    LLM_TIMEOUT
+    LLM_TIMEOUT, SESSIONS_DIR
 )
 
 # Load environment variables
@@ -109,6 +111,14 @@ else:
     else:
         print("ℹ️  RAG system not initialized (OpenAI client required)")
 
+# Initialize Session Manager (pass db_manager if RAG is enabled)
+db_manager_for_sessions = None
+if rag_system:
+    db_manager_for_sessions = rag_system.db_manager
+
+session_manager = SessionManager(sessions_dir=SESSIONS_DIR, db_manager=db_manager_for_sessions)
+print(f"✅ Session manager initialized (sessions dir: {SESSIONS_DIR})")
+
 
 class Message(BaseModel):
     role: str
@@ -119,11 +129,24 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
     model: Optional[str] = None  # Will use default based on provider
+    selected_chunks: Optional[List[str]] = None  # Selected chunk IDs for re-sending
+    session_id: Optional[str] = None  # Session ID for tracking
 
+
+class ChunkInfo(BaseModel):
+    id: str
+    text: str
+    document_id: str
+    chunk_index: int
+    score: float
+    distance: float
 
 class ChatResponse(BaseModel):
     message: str
     model: str
+    chunks: Optional[List[ChunkInfo]] = None  # Context chunks used
+    session_id: Optional[str] = None  # Session ID
+    message_id: Optional[str] = None  # Message ID for tracking
 
 
 @app.get("/")
@@ -244,6 +267,34 @@ async def list_documents():
         db.close()
 
 
+@app.get("/api/chunks/{chunk_id}")
+async def get_chunk(chunk_id: str):
+    """
+    Get chunk content by ID from database
+    Used to fetch chunk text when it's missing from session logs
+    """
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    from database import Chunk
+    from sqlalchemy.orm import Session
+    
+    db: Session = rag_system.db_manager.get_session()
+    try:
+        chunk_record = db.query(Chunk).filter(Chunk.id == chunk_id).first()
+        if not chunk_record:
+            raise HTTPException(status_code=404, detail=f"Chunk {chunk_id} not found")
+        
+        return {
+            "id": chunk_record.id,
+            "text": chunk_record.text,
+            "document_id": chunk_record.document_id,
+            "chunk_index": chunk_record.chunk_index
+        }
+    finally:
+        db.close()
+
+
 @app.get("/api/documents/search")
 async def search_documents(query: str = "", limit: int = 5):
     """
@@ -353,7 +404,7 @@ async def resync_databases():
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     """
     Chat endpoint that sends messages to LLM API and returns response
     Uses RAG system to retrieve relevant context if enabled
@@ -374,6 +425,13 @@ async def chat(request: ChatRequest):
         
         # Retrieve relevant context from RAG if enabled
         rag_context = ""
+        retrieved_chunks = []
+        selected_chunk_ids = None
+        
+        # Check if request includes selected chunks (for re-sending)
+        if hasattr(request, 'selected_chunks') and request.selected_chunks:
+            selected_chunk_ids = set(request.selected_chunks)
+        
         if rag_system and last_user_message:
             try:
                 # Search for similar chunks
@@ -386,12 +444,41 @@ async def chat(request: ChatRequest):
                 similar_chunks = rag_system.search_similar(query_text, top_k=RAG_TOP_K)
                 
                 if similar_chunks:
-                    # Build context from retrieved chunks
-                    context_parts = ["[Relevant context from documents:]"]
-                    for chunk in similar_chunks:
-                        context_parts.append(f"\n---\n{chunk.text}")
-                    rag_context = "\n".join(context_parts)
-                    print(f"✅ Retrieved {len(similar_chunks)} relevant chunks from RAG")
+                    # Filter chunks if specific ones are selected
+                    if selected_chunk_ids:
+                        # Convert selected_chunk_ids to both string and int for comparison
+                        selected_ids_set = set()
+                        for sid in selected_chunk_ids:
+                            selected_ids_set.add(str(sid))
+                            try:
+                                selected_ids_set.add(int(sid))
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        similar_chunks = [chunk for chunk in similar_chunks 
+                                        if chunk.id in selected_ids_set or 
+                                           str(chunk.id) in selected_ids_set]
+                    
+                    # Store chunk info for response
+                    retrieved_chunks = [
+                        ChunkInfo(
+                            id=str(chunk.id),  # Convert to string for frontend
+                            text=chunk.text,
+                            document_id=chunk.document_id,
+                            chunk_index=chunk.chunk_index,
+                            score=chunk.score,
+                            distance=chunk.distance
+                        )
+                        for chunk in similar_chunks
+                    ]
+                    
+                    if similar_chunks:
+                        # Build context from retrieved chunks
+                        context_parts = ["[Relevant context from documents:]"]
+                        for chunk in similar_chunks:
+                            context_parts.append(f"\n---\n{chunk.text}")
+                        rag_context = "\n".join(context_parts)
+                        print(f"✅ Retrieved {len(similar_chunks)} relevant chunks from RAG")
             except Exception as e:
                 print(f"⚠️  RAG retrieval error: {e}")
                 # Continue without RAG context
@@ -470,11 +557,75 @@ async def chat(request: ChatRequest):
         
         # Extract the assistant's message
         assistant_message = response.choices[0].message.content
+        assistant_message_id = f"msg-{uuid.uuid4()}"
         
-        return ChatResponse(
+        # Auto-create session if not provided
+        session_id = request.session_id
+        # Handle None, empty string, or null values
+        if not session_id or session_id == "null" or session_id == "":
+            try:
+                session_id = session_manager.create_session()
+                print(f"✅ Auto-created session: {session_id}")
+            except Exception as e:
+                import traceback
+                print(f"⚠️  Error creating session: {e}")
+                traceback.print_exc()
+                session_id = None
+        else:
+            print(f"📝 Using existing session: {session_id}")
+        
+        # Save to session asynchronously (background task)
+        if session_id:
+            # Prepare data for background task
+            user_message_id = f"msg-{uuid.uuid4()}" if last_user_message else None
+            user_content = None
+            user_attachments = None
+            if last_user_message:
+                user_content = last_user_message.content
+                if last_user_message.attachments:
+                    user_content += "\n" + "\n".join([
+                        f"[Attachment: {att.get('filename', 'file')}]"
+                        for att in last_user_message.attachments
+                    ])
+                user_attachments = last_user_message.attachments
+            
+            chunks_data = None
+            if retrieved_chunks:
+                chunks_data = [
+                    {
+                        'id': str(chunk.id),  # Ensure chunk ID is string for consistency
+                        'text': chunk.text,
+                        'document_id': chunk.document_id,
+                        'chunk_index': chunk.chunk_index,
+                        'score': chunk.score,
+                        'distance': chunk.distance
+                    }
+                    for chunk in retrieved_chunks
+                ]
+                print(f"💾 Preparing {len(chunks_data)} chunks for session save (IDs: {[c['id'][:8] for c in chunks_data[:3]]}...)")
+            
+            # Add background task to save session data
+            background_tasks.add_task(
+                save_session_data,
+                session_id=session_id,
+                user_message_id=user_message_id,
+                user_content=user_content,
+                user_attachments=user_attachments,
+                assistant_message_id=assistant_message_id,
+                assistant_content=assistant_message,
+                model=model_to_use,
+                chunks_data=chunks_data
+            )
+        
+        response_data = ChatResponse(
             message=assistant_message,
-            model=model_to_use
+            model=model_to_use,
+            chunks=retrieved_chunks if retrieved_chunks else None,
+            session_id=session_id,
+            message_id=assistant_message_id
         )
+        print(f"📤 Returning response with session_id: {session_id}")
+        return response_data
     
     except HTTPException:
         # Re-raise HTTP exceptions as-is
@@ -485,6 +636,148 @@ async def chat(request: ChatRequest):
             detail=f"Unexpected error: {str(e)}"
         )
 
+
+# ============================================
+# Background Task Functions
+# ============================================
+
+def save_session_data(
+    session_id: str,
+    user_message_id: Optional[str],
+    user_content: Optional[str],
+    user_attachments: Optional[List[Dict]],
+    assistant_message_id: str,
+    assistant_content: str,
+    model: str,
+    chunks_data: Optional[List[Dict]]
+):
+    """Background task to save session data asynchronously"""
+    try:
+        # Save user message
+        if user_message_id and user_content:
+            session_manager.save_message(
+                session_id=session_id,
+                message_id=user_message_id,
+                role="user",
+                content=user_content,
+                attachments=user_attachments
+            )
+        
+        # Save assistant message
+        session_manager.save_message(
+            session_id=session_id,
+            message_id=assistant_message_id,
+            role="assistant",
+            content=assistant_content,
+            model=model
+        )
+        
+        # Save chunks if any
+        if chunks_data:
+            session_manager.save_chunks(
+                session_id=session_id,
+                message_id=assistant_message_id,
+                chunks=chunks_data
+            )
+        
+        print(f"✅ Saved session data for {session_id}")
+        print(f"   - User message: {user_message_id}")
+        print(f"   - Assistant message: {assistant_message_id}")
+        print(f"   - Chunks: {len(chunks_data) if chunks_data else 0}")
+    except Exception as e:
+        import traceback
+        print(f"⚠️  Error saving session data: {e}")
+        traceback.print_exc()
+
+
+# ============================================
+# Session Management Endpoints
+# ============================================
+
+class SessionCreateRequest(BaseModel):
+    title: Optional[str] = None
+
+class SessionCreateResponse(BaseModel):
+    session_id: str
+    title: str
+    created_at: str
+
+class SessionInfo(BaseModel):
+    session_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int
+
+class SessionMessagesResponse(BaseModel):
+    session_id: str
+    messages: List[dict]
+    chunks: Optional[Dict[str, List[dict]]] = None  # message_id -> chunks
+
+@app.post("/api/sessions", response_model=SessionCreateResponse)
+async def create_session(request: SessionCreateRequest):
+    """Create a new chat session"""
+    try:
+        session_id = session_manager.create_session(title=request.title)
+        metadata = session_manager.get_session_metadata(session_id)
+        return SessionCreateResponse(
+            session_id=session_id,
+            title=metadata['title'],
+            created_at=metadata['created_at']
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating session: {str(e)}")
+
+@app.get("/api/sessions", response_model=List[SessionInfo])
+async def list_sessions():
+    """List all sessions"""
+    try:
+        sessions = session_manager.list_sessions()
+        return [SessionInfo(**session) for session in sessions]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing sessions: {str(e)}")
+
+@app.get("/api/sessions/{session_id}", response_model=SessionMessagesResponse)
+async def get_session(session_id: str):
+    """Get session messages and chunks"""
+    try:
+        messages = session_manager.get_messages(session_id)
+        
+        # Get chunks for each assistant message
+        chunks_dict = {}
+        for msg in messages:
+            if msg['role'] == 'assistant':
+                msg_chunks = session_manager.get_chunks_for_message(session_id, msg['id'])
+                if msg_chunks:
+                    chunks_dict[msg['id']] = msg_chunks
+        
+        return SessionMessagesResponse(
+            session_id=session_id,
+            messages=messages,
+            chunks=chunks_dict if chunks_dict else None
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting session: {str(e)}")
+
+@app.put("/api/sessions/{session_id}/title")
+async def update_session_title(session_id: str, title: str):
+    """Update session title"""
+    try:
+        session_manager.update_session_title(session_id, title)
+        return {"status": "ok", "message": "Title updated"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating title: {str(e)}")
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session"""
+    try:
+        session_manager.delete_session(session_id)
+        return {"status": "ok", "message": "Session deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting session: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

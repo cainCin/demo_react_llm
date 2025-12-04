@@ -1,13 +1,24 @@
 /* Theme Variables - Applied via ThemeContext */
 /* All colors are now theme-aware via CSS variables */
 
+.app-layout {
+  display: flex;
+  flex-direction: row;
+  height: 90vh;
+  max-height: 800px;
+  gap: 0;
+  width: 100%;
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
 .chatbox-container {
   display: flex;
   flex-direction: column;
-  height: 90vh;
-  max-height: 800px;
+  flex: 1;
+  min-width: 0;
   background: var(--color-background, #ffffff);
-  border-radius: 20px;
+  border-radius: 0;
   box-shadow: 0 20px 60px var(--color-shadow, rgba(0, 0, 0, 0.3));
   overflow: hidden;
 }
@@ -28,6 +39,43 @@
 .chatbox-header p {
   font-size: 14px;
   opacity: 0.9;
+}
+
+.session-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.session-label {
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.session-id {
+  font-family: 'Courier New', monospace;
+  font-weight: 500;
+  opacity: 0.95;
+  cursor: pointer;
+  user-select: all;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.session-id:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .health-status-container {

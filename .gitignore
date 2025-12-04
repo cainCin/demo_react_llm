@@ -27,6 +27,11 @@ frontend/.vite/
 *.csv
 *.db
 
+# Session logs and data
+sessions/
+backend/sessions/
+*.session
+
 # OS
 .DS_Store
 Thumbs.db

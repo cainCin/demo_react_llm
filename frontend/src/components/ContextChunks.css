@@ -1,0 +1,203 @@
+.context-chunks-container {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--color-backgroundSecondary, #f8f9fa);
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.context-chunks-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border, #e0e0e0);
+}
+
+.context-chunks-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--color-text, #333);
+}
+
+.context-icon {
+  font-size: 16px;
+}
+
+.context-chunks-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.select-all-button,
+.resend-button {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 6px;
+  background: var(--color-background, #ffffff);
+  color: var(--color-text, #333);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.select-all-button:hover,
+.resend-button:hover:not(:disabled) {
+  background: var(--color-primary, #667eea);
+  color: var(--color-textInverse, #ffffff);
+  border-color: var(--color-primary, #667eea);
+}
+
+.resend-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.context-chunks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.context-chunk-item {
+  padding: 10px;
+  background: var(--color-background, #ffffff);
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.context-chunk-item:hover {
+  border-color: var(--color-primary, #667eea);
+  box-shadow: 0 2px 4px var(--color-shadowLight, rgba(0, 0, 0, 0.05));
+}
+
+.context-chunk-item.selected {
+  border-color: var(--color-primary, #667eea);
+  background: var(--color-primaryLight, rgba(102, 126, 234, 0.05));
+}
+
+.chunk-checkbox-wrapper {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 4px;
+  flex-shrink: 0;
+}
+
+.chunk-checkbox {
+  margin: 0;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary, #667eea);
+}
+
+.chunk-checkbox-label {
+  display: none; /* Hidden, only for accessibility */
+}
+
+.chunk-checkbox {
+  margin-top: 4px;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary, #667eea);
+}
+
+.chunk-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0; /* Allows text to wrap properly */
+}
+
+.chunk-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--color-textSecondary, #666);
+}
+
+.chunk-index {
+  font-weight: 600;
+  color: var(--color-primary, #667eea);
+}
+
+.chunk-score {
+  padding: 2px 6px;
+  background: var(--color-primaryLight, rgba(102, 126, 234, 0.1));
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.chunk-text {
+  color: var(--color-text, #333);
+  line-height: 1.5;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.chunk-text:hover {
+  color: var(--color-primary, #667eea);
+  text-decoration: underline;
+}
+
+.chunk-text-placeholder {
+  font-style: italic;
+  opacity: 0.6;
+  color: var(--color-textSecondary, #999);
+}
+
+.chunk-metadata {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--color-textSecondary, #666);
+  margin-top: 4px;
+}
+
+.chunk-doc-id {
+  font-family: 'Courier New', monospace;
+  opacity: 0.7;
+}
+
+.chunk-index-badge {
+  padding: 2px 6px;
+  background: var(--color-backgroundSecondary, #f8f9fa);
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+/* Scrollbar styling */
+.context-chunks-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.context-chunks-list::-webkit-scrollbar-track {
+  background: var(--color-backgroundSecondary, #f8f9fa);
+  border-radius: 3px;
+}
+
+.context-chunks-list::-webkit-scrollbar-thumb {
+  background: var(--color-border, #e0e0e0);
+  border-radius: 3px;
+}
+
+.context-chunks-list::-webkit-scrollbar-thumb:hover {
+  background: var(--color-textSecondary, #999);
+}
+
