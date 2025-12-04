@@ -24,8 +24,8 @@ frontend/.vite/
 *~
 
 #DEBUG
-.csv
-.db
+*.csv
+*.db
 
 # OS
 .DS_Store

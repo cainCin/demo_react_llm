@@ -342,6 +342,16 @@
   border-top: 1px solid var(--color-border, #e0e0e0);
   gap: 10px;
   align-items: center;
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.input-wrapper {
+  position: relative;
+  flex: 1;
+  min-width: 0; /* Allows flex item to shrink below content size */
+  display: flex;
 }
 
 .file-input-hidden {
@@ -351,6 +361,7 @@
 .file-upload-button {
   width: 50px;
   height: 50px;
+  min-width: 50px;
   border: 2px solid var(--color-border, #e0e0e0);
   border-radius: 50%;
   background: var(--color-background, #ffffff);
@@ -376,7 +387,7 @@
 }
 
 .chatbox-input {
-  flex: 1;
+  width: 100%;
   padding: 12px 18px;
   border: 2px solid var(--color-inputBorder, #e0e0e0);
   border-radius: 25px;
@@ -385,6 +396,7 @@
   color: var(--color-inputText, #333333);
   outline: none;
   transition: border-color 0.3s;
+  box-sizing: border-box;
 }
 
 .chatbox-input:focus {
@@ -399,6 +411,8 @@
 .chatbox-send-button {
   width: 50px;
   height: 50px;
+  min-width: 50px;
+  flex-shrink: 0;
   border: none;
   border-radius: 50%;
   background: var(--color-buttonPrimary, linear-gradient(135deg, #667eea 0%, #764ba2 100%));

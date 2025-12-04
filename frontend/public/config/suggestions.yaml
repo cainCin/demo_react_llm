@@ -1,0 +1,91 @@
+# Suggestion Configuration
+# Maps symbols to their suggestion providers and settings
+# This file is served from the public directory and can be edited without rebuilding
+
+suggestions:
+  # Document suggestions (from PostgreSQL database)
+  - symbol: "@"
+    name: "Documents"
+    description: "Mention documents from the database"
+    icon: "📄"
+    provider: "documents"
+    enabled: true
+    trigger:
+      # Trigger when symbol appears at start or after whitespace
+      pattern: "^@|\\s@"
+      # Minimum characters after symbol to trigger search
+      minChars: 0
+    api:
+      endpoint: "/api/documents/search"
+      method: "GET"
+      params:
+        query: "{query}"
+        limit: 5
+    display:
+      title: "Documents"
+      itemTemplate: "{filename}"
+      metadata:
+        - label: "Chunks"
+          value: "{chunk_count}"
+        - label: "Date"
+          value: "{created_at}"
+          format: "date"
+    keyboard:
+      selectKey: "Enter"
+      closeKey: "Escape"
+      navigateKeys: ["ArrowUp", "ArrowDown"]
+
+  # Example: User mentions (can be extended later)
+  # - symbol: "#"
+  #   name: "Users"
+  #   description: "Mention users"
+  #   icon: "👤"
+  #   provider: "users"
+  #   enabled: false
+  #   trigger:
+  #     pattern: "^#|\\s#"
+  #     minChars: 1
+  #   api:
+  #     endpoint: "/api/users/search"
+  #     method: "GET"
+  #     params:
+  #       query: "{query}"
+  #       limit: 5
+  #   display:
+  #     title: "Users"
+  #     itemTemplate: "{username}"
+  #     metadata:
+  #       - label: "Role"
+  #         value: "{role}"
+  #   keyboard:
+  #     selectKey: "Enter"
+  #     closeKey: "Escape"
+  #     navigateKeys: ["ArrowUp", "ArrowDown"]
+
+  # Example: Tag suggestions (can be extended later)
+  # - symbol: "$"
+  #   name: "Tags"
+  #   description: "Mention tags"
+  #   icon: "🏷️"
+  #   provider: "tags"
+  #   enabled: false
+  #   trigger:
+  #     pattern: "^\\$|\\s\\$"
+  #     minChars: 0
+  #   api:
+  #     endpoint: "/api/tags/search"
+  #     method: "GET"
+  #     params:
+  #       query: "{query}"
+  #       limit: 10
+  #   display:
+  #     title: "Tags"
+  #     itemTemplate: "{name}"
+  #     metadata:
+  #       - label: "Count"
+  #         value: "{count}"
+  #   keyboard:
+  #     selectKey: "Enter"
+  #     closeKey: "Escape"
+  #     navigateKeys: ["ArrowUp", "ArrowDown"]
+

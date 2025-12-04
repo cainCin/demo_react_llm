@@ -244,6 +244,59 @@ async def list_documents():
         db.close()
 
 
+@app.get("/api/documents/search")
+async def search_documents(query: str = "", limit: int = 5):
+    """
+    Search documents by filename (for @ mention suggestions)
+    Returns top matching documents (case-insensitive, partial match)
+    """
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    from database import Document, DocumentListItem
+    from sqlalchemy.orm import Session
+    from sqlalchemy import func
+    
+    db: Session = rag_system.db_manager.get_session()
+    try:
+        # Count total documents for debugging
+        total_docs = db.query(Document).count()
+        print(f"📊 Total documents in database: {total_docs}")
+        
+        if not query or len(query.strip()) == 0:
+            # If no query, return most recent documents
+            documents = db.query(Document).order_by(Document.created_at.desc()).limit(limit).all()
+            print(f"📄 Returning {len(documents)} most recent documents (no query)")
+        else:
+            # Case-insensitive partial match on filename
+            search_pattern = f"%{query.strip()}%"
+            documents = db.query(Document).filter(
+                func.lower(Document.filename).like(func.lower(search_pattern))
+            ).order_by(Document.created_at.desc()).limit(limit).all()
+            print(f"🔍 Search for '{query}': found {len(documents)} documents")
+        
+        result_docs = [
+            DocumentListItem.from_orm(doc).to_dict()
+            for doc in documents
+        ]
+        
+        print(f"✅ Returning {len(result_docs)} documents to frontend")
+        
+        return {
+            "documents": result_docs,
+            "query": query,
+            "count": len(documents),
+            "total": total_docs
+        }
+    except Exception as e:
+        print(f"❌ Error in search_documents: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error searching documents: {str(e)}")
+    finally:
+        db.close()
+
+
 @app.delete("/api/documents/{document_id}")
 async def delete_document(document_id: str):
     """Delete a document and all its chunks (RAG system only)"""

@@ -1,7 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import { useTheme } from './contexts/ThemeContext'
 import ThemeSwitcher from './components/ThemeSwitcher'
+import SuggestionDropdown from './components/SuggestionDropdown'
+import { detectSuggestionTrigger } from './utils/suggestionConfig'
+import { searchSuggestions, getSuggestionDisplayInfo } from './services/suggestionService'
 import './App.css'
 
 // Use relative URL to leverage Vite proxy, or full URL if VITE_API_URL is set
@@ -25,9 +28,19 @@ function App() {
   })
   const [attachedFiles, setAttachedFiles] = useState([])
   const [isUploading, setIsUploading] = useState(false)
+  const [suggestions, setSuggestions] = useState([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0)
+  const [suggestionQuery, setSuggestionQuery] = useState('')
+  const [suggestionSymbol, setSuggestionSymbol] = useState(null)
+  const [suggestionConfig, setSuggestionConfig] = useState(null)
+  const [suggestionDisplayInfo, setSuggestionDisplayInfo] = useState(null)
+  const [suggestionPosition, setSuggestionPosition] = useState(null)
   const fileInputRef = useRef(null)
   const messagesEndRef = useRef(null)
   const healthCheckIntervalRef = useRef(null)
+  const inputRef = useRef(null)
+  const suggestionsTimeoutRef = useRef(null)
   const { currentTheme } = useTheme()
 
   const scrollToBottom = () => {
@@ -140,6 +153,210 @@ function App() {
   const removeFile = (index) => {
     setAttachedFiles(prev => prev.filter((_, i) => i !== index))
   }
+
+  // Handle input change and detect suggestion triggers (config-based)
+  const handleInputChange = async (e) => {
+    const value = e.target.value
+    setInput(value)
+
+    // Detect suggestion trigger using configuration
+    try {
+      const trigger = await detectSuggestionTrigger(value)
+      console.log('🔍 Trigger detection result:', trigger)
+      
+      if (trigger) {
+        console.log(`✅ Trigger detected: ${trigger.symbol} with query: "${trigger.query}"`)
+      setSuggestionQuery(trigger.query)
+      setSuggestionSymbol(trigger.symbol)
+      setSuggestionConfig(trigger.config)
+      
+      // Get display info for the suggestion type
+      const displayInfo = await getSuggestionDisplayInfo(trigger.symbol)
+      setSuggestionDisplayInfo(displayInfo)
+      
+      // Clear previous timeout
+      if (suggestionsTimeoutRef.current) {
+        clearTimeout(suggestionsTimeoutRef.current)
+      }
+
+      // Debounce search
+      suggestionsTimeoutRef.current = setTimeout(async () => {
+        // Check if RAG is enabled for document suggestions
+        if (trigger.symbol === '@' && !healthStatus.ragEnabled) {
+          console.log('⚠️ RAG not enabled - showing empty suggestions dropdown')
+          setSuggestions([])
+          // Still show dropdown to indicate the feature is working
+          if (inputRef.current) {
+            const inputRect = inputRef.current.getBoundingClientRect()
+            setSuggestionPosition({
+              top: inputRect.top - 100,
+              left: inputRect.left,
+              width: inputRect.width
+            })
+            setShowSuggestions(true)
+          }
+          return
+        }
+        
+        console.log(`🔍 Searching suggestions for "${trigger.symbol}" with query: "${trigger.query}"`)
+        const results = await searchSuggestions(trigger.symbol, trigger.query)
+        console.log(`📋 Found ${results.length} suggestions`)
+        setSuggestions(results)
+        setSelectedSuggestionIndex(0)
+        
+        // Calculate position for suggestions dropdown (fixed positioning)
+        if (inputRef.current) {
+          const inputRect = inputRef.current.getBoundingClientRect()
+          // Position above the input field with some margin
+          // Estimate dropdown height: header (~40px) + items (~60px each) + footer (~30px)
+          const itemCount = Math.max(1, results.length) // At least 1 for empty state
+          const estimatedDropdownHeight = Math.min(300, 40 + (itemCount * 60) + 30)
+          setSuggestionPosition({
+            top: inputRect.top - estimatedDropdownHeight - 8,
+            left: inputRect.left,
+            width: inputRect.width
+          })
+          setShowSuggestions(true)
+          console.log('✅ Showing suggestions dropdown with', results.length, 'results')
+        } else {
+          console.warn('⚠️ inputRef.current is null, cannot show suggestions')
+          setShowSuggestions(false)
+        }
+      }, 300) // 300ms debounce
+      } else {
+        setShowSuggestions(false)
+        setSuggestions([])
+        setSuggestionSymbol(null)
+        setSuggestionConfig(null)
+        setSuggestionDisplayInfo(null)
+        if (suggestionsTimeoutRef.current) {
+          clearTimeout(suggestionsTimeoutRef.current)
+        }
+      }
+    } catch (error) {
+      console.error('Error in handleInputChange:', error)
+      setShowSuggestions(false)
+      setSuggestions([])
+    }
+  }
+
+  // Handle keyboard navigation in suggestions (config-based)
+  const handleKeyDown = async (e) => {
+    if (!showSuggestions || suggestions.length === 0 || !suggestionConfig) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        sendMessage(e)
+      }
+      return
+    }
+
+    const keyboardConfig = suggestionConfig.keyboard || {}
+    const selectKey = keyboardConfig.selectKey || 'Enter'
+    const closeKey = keyboardConfig.closeKey || 'Escape'
+    const navigateKeys = keyboardConfig.navigateKeys || ['ArrowUp', 'ArrowDown']
+
+    switch (e.key) {
+      case 'ArrowDown':
+        if (navigateKeys.includes('ArrowDown')) {
+          e.preventDefault()
+          setSelectedSuggestionIndex(prev => 
+            prev < suggestions.length - 1 ? prev + 1 : prev
+          )
+        }
+        break
+      case 'ArrowUp':
+        if (navigateKeys.includes('ArrowUp')) {
+          e.preventDefault()
+          setSelectedSuggestionIndex(prev => prev > 0 ? prev - 1 : 0)
+        }
+        break
+      case 'Enter':
+        if (selectKey === 'Enter') {
+          e.preventDefault()
+          if (suggestions[selectedSuggestionIndex]) {
+            await handleSuggestionSelect(suggestions[selectedSuggestionIndex])
+          }
+        }
+        break
+      case 'Escape':
+        if (closeKey === 'Escape') {
+          e.preventDefault()
+          setShowSuggestions(false)
+          setSuggestions([])
+          setSuggestionSymbol(null)
+          setSuggestionConfig(null)
+          setSuggestionDisplayInfo(null)
+        }
+        break
+      default:
+        // Allow normal typing
+        break
+    }
+  }
+
+  // Handle suggestion selection (generic, works with any suggestion type)
+  const handleSuggestionSelect = async (item) => {
+    if (!suggestionConfig || !suggestionSymbol) return
+    
+    // Find the trigger position in input
+    const trigger = await detectSuggestionTrigger(input)
+    if (!trigger) return
+    
+    // Get the replacement value (filename, name, title, etc.)
+    const replacement = item.filename || item.name || item.title || item.formattedTitle || ''
+    
+    // Replace the trigger with the selected item
+    const beforeTrigger = input.substring(0, trigger.index)
+    const afterTrigger = input.substring(trigger.index + 1 + trigger.query.length)
+    const newInput = `${beforeTrigger}${suggestionSymbol}${replacement}${afterTrigger}`
+    
+    setInput(newInput)
+    setShowSuggestions(false)
+    setSuggestions([])
+    setSuggestionQuery('')
+    setSuggestionSymbol(null)
+    setSuggestionConfig(null)
+    setSuggestionDisplayInfo(null)
+    
+    // Focus back on input
+    if (inputRef.current) {
+      inputRef.current.focus()
+      // Move cursor to end of replacement
+      const cursorPos = beforeTrigger.length + suggestionSymbol.length + replacement.length
+      inputRef.current.setSelectionRange(cursorPos, cursorPos)
+    }
+  }
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (
+        inputRef.current &&
+        !inputRef.current.contains(event.target) &&
+        !event.target.closest('.suggestion-dropdown')
+      ) {
+        setShowSuggestions(false)
+        setSuggestionSymbol(null)
+        setSuggestionConfig(null)
+        setSuggestionDisplayInfo(null)
+      }
+    }
+
+    if (showSuggestions) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+      }
+    }
+  }, [showSuggestions])
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (suggestionsTimeoutRef.current) {
+        clearTimeout(suggestionsTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const sendMessage = async (e) => {
     e.preventDefault()
@@ -309,14 +526,33 @@ function App() {
         <label htmlFor="file-input" className="file-upload-button" title="Attach file">
           {isUploading ? '⏳' : '📎'}
         </label>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message..."
-          disabled={isLoading}
-          className="chatbox-input"
-        />
+        <div className="input-wrapper">
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Type your message... Use @ for documents"
+            disabled={isLoading}
+            className="chatbox-input"
+          />
+          {showSuggestions && suggestionDisplayInfo && (
+            <SuggestionDropdown
+              suggestions={suggestions}
+              selectedIndex={selectedSuggestionIndex}
+              onSelect={handleSuggestionSelect}
+              onClose={() => {
+                setShowSuggestions(false)
+                setSuggestionSymbol(null)
+                setSuggestionConfig(null)
+                setSuggestionDisplayInfo(null)
+              }}
+              position={suggestionPosition}
+              displayInfo={suggestionDisplayInfo}
+            />
+          )}
+        </div>
         <button
           type="submit"
           disabled={isLoading || (!input.trim() && attachedFiles.length === 0)}
