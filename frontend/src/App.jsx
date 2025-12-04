@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
+import { useTheme } from './contexts/ThemeContext'
+import ThemeSwitcher from './components/ThemeSwitcher'
 import './App.css'
 
 // Use relative URL to leverage Vite proxy, or full URL if VITE_API_URL is set
@@ -26,6 +28,7 @@ function App() {
   const fileInputRef = useRef(null)
   const messagesEndRef = useRef(null)
   const healthCheckIntervalRef = useRef(null)
+  const { currentTheme } = useTheme()
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -196,6 +199,10 @@ function App() {
   return (
     <div className="chatbox-container">
       <div className="chatbox-header">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <div style={{ flex: 1 }}></div>
+          <ThemeSwitcher />
+        </div>
         <h1>💬 AI Chatbox</h1>
         <p>Powered by LLM API</p>
         <div className="health-status-container">

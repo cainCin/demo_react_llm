@@ -10,12 +10,14 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  /* Theme-aware background - uses gradient from current theme */
+  background: var(--gradient-header, linear-gradient(135deg, #667eea 0%, #764ba2 100%));
   min-height: 100vh;
   display: flex;
   justify-content: center;
   align-items: center;
   padding: 20px;
+  transition: background 0.3s ease;
 }
 
 #root {
