@@ -1,0 +1,150 @@
+# Chatbox App - Cursor IDE Rules
+
+## Project Overview
+This is a full-stack chat application with React frontend, FastAPI backend, PostgreSQL for text storage, and Milvus Lite for vector embeddings.
+
+## Critical Rules
+
+### Database Operations
+- ALWAYS use `DatabaseManager` class for all database operations. NEVER access databases directly.
+- Text MUST be stored ONLY in PostgreSQL. NEVER store text in Milvus (only embeddings).
+- ALWAYS convert UUID strings to int64 for Milvus IDs using `DatabaseManager._uuid_to_int64()`.
+- ALWAYS close database sessions in finally blocks: `db.close()`.
+- ALWAYS use ORM models (Document, Chunk) through `get_session()`, not direct methods like `get_document()`.
+
+### Code Organization
+- Database code goes in `backend/database/` package only.
+- RAG logic goes in `backend/rag_system.py` and MUST delegate to DatabaseManager.
+- API endpoints go in `backend/main.py` using FastAPI.
+- Frontend components go in `frontend/src/components/`.
+- Frontend config files (YAML) go in `frontend/public/config/` for runtime loading.
+
+### Naming Conventions
+- Python classes: `PascalCase` (DatabaseManager, RAGSystem)
+- Python functions: `snake_case` (store_document, get_session)
+- Python constants: `UPPER_SNAKE_CASE` (CHUNK_SIZE, EMBEDDING_DIM)
+- Python private methods: `_snake_case` with leading underscore
+- React components: `PascalCase` (SuggestionDropdown, ThemeSwitcher)
+- JavaScript functions: `camelCase` (handleInputChange, searchSuggestions)
+- Database tables: `snake_case`, plural (documents, chunks)
+
+### Error Handling
+- ALWAYS use try/except/finally for database operations.
+- ALWAYS rollback on database errors: `db.rollback()`.
+- ALWAYS close sessions in finally blocks.
+- Use appropriate HTTP status codes (200, 400, 401, 413, 422, 500, 503, 504).
+- Log detailed errors server-side, return user-friendly messages to clients.
+
+### API Patterns
+- ALWAYS validate input using Pydantic models.
+- ALWAYS return consistent response format: `{"status": "ok", "data": {...}}`.
+- ALWAYS check if RAG is enabled before RAG operations: `if not rag_system: raise HTTPException(...)`.
+- Model selection priority: request model → Azure deployment → default model.
+
+### Frontend Patterns
+- ALWAYS use CSS variables for theming (--color-primary, etc.).
+- ALWAYS use axios for API calls with error handling.
+- ALWAYS debounce search requests (300ms).
+- ALWAYS handle loading and error states.
+- ALWAYS use React hooks properly (useState, useEffect, useRef, useContext).
+
+### Testing
+- ALWAYS use ORM queries in tests, not non-existent methods like `get_document()`.
+- ALWAYS use temporary databases for tests.
+- ALWAYS mock external APIs (OpenAI).
+- ALWAYS clean up after tests.
+- Use pytest markers: @pytest.mark.api, @pytest.mark.database, @pytest.mark.rag
+
+### Type Safety
+- ALWAYS use type hints for function parameters and returns.
+- ALWAYS use data classes (DocumentData, ChunkData, etc.) for business logic.
+- ALWAYS use ORM models (Document, Chunk) for database operations.
+
+### Environment Variables
+- ALWAYS load from environment variables with defaults in `config.py`.
+- NEVER commit `.env` files.
+- ALWAYS provide `env.example` as template.
+
+### Documentation
+- ALWAYS add docstrings to public methods.
+- ALWAYS explain "why" in comments, not "what".
+- ALWAYS include type hints.
+
+## Common Patterns
+
+### Database Operation Pattern
+```python
+db = db_manager.get_session()
+try:
+    # Operation
+    db.commit()
+except Exception as e:
+    db.rollback()
+    raise
+finally:
+    db.close()
+```
+
+### API Endpoint Pattern
+```python
+@app.get("/api/endpoint")
+async def endpoint():
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG not enabled")
+    try:
+        # Operation
+        return {"status": "ok", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+### React Component Pattern
+```javascript
+import React, { useState, useEffect } from 'react'
+
+const Component = ({ prop1, prop2 }) => {
+    const [state, setState] = useState(null)
+    
+    useEffect(() => {
+        // Side effects
+    }, [dependencies])
+    
+    return <div>{/* JSX */}</div>
+}
+
+export default Component
+```
+
+## Anti-Patterns (NEVER DO THIS)
+
+- NEVER access databases directly outside DatabaseManager
+- NEVER store text in Milvus (only embeddings)
+- NEVER forget to close database sessions
+- NEVER use hardcoded values (use config.py constants)
+- NEVER expose internal errors to clients
+- NEVER use non-existent methods like `get_document()` or `get_chunks()` in tests
+- NEVER skip error handling
+- NEVER skip type hints
+
+## File Locations
+
+- Database code: `backend/database/`
+- RAG system: `backend/rag_system.py`
+- API endpoints: `backend/main.py`
+- Configuration: `backend/config.py`
+- Tests: `backend/tests/`
+- Frontend components: `frontend/src/components/`
+- Frontend services: `frontend/src/services/`
+- Frontend config: `frontend/public/config/`
+
+## When Adding New Features
+
+1. Check if it belongs in existing package/structure
+2. Use DatabaseManager for any database operations
+3. Add type hints and docstrings
+4. Write tests using proper fixtures
+5. Update relevant documentation
+6. Follow naming conventions
+7. Handle errors appropriately
+8. Use environment variables for configuration
+
