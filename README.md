@@ -206,6 +206,23 @@ Send a chat message to the LLM.
 - **"node: command not found"**: Install Node.js 16 or higher from https://nodejs.org/
 - **Permission denied**: The installation doesn't require root. Make sure you have write permissions in the project directory
 
+## 🔍 Database Verification
+
+If you're using the RAG system, you can verify what's stored in your databases (PostgreSQL and Milvus Lite) using the verification script:
+
+```bash
+cd backend
+python verify_databases.py
+```
+
+This script will show:
+- All documents stored in PostgreSQL
+- All chunks and their metadata
+- All vectors stored in Milvus Lite
+- Collection information and statistics
+
+**Note:** Make sure your virtual environment is activated and PostgreSQL is running before running the verification script.
+
 ## 📝 License
 
 This project is open source and available for personal and commercial use.

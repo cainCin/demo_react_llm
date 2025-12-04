@@ -1,91 +1,36 @@
 """
 RAG (Retrieval-Augmented Generation) System
 Uses Milvus Lite for vector search and PostgreSQL for full text storage
+Database operations are handled by DatabaseManager
 """
-import os
 import uuid
 import hashlib
 from typing import List, Optional, Dict
-from datetime import datetime
-from pymilvus import MilvusClient
-from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from database import DatabaseManager, Document, Chunk
 from config import (
     CHUNK_SIZE, CHUNK_OVERLAP, CHUNK_MIN_SIZE,
     EMBEDDING_MODEL, EMBEDDING_DIM,
     RAG_TOP_K, RAG_SIMILARITY_THRESHOLD,
-    MILVUS_METRIC_TYPE,
-    POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD,
-    MILVUS_LITE_PATH, MILVUS_COLLECTION
+    MILVUS_METRIC_TYPE
 )
-
-Base = declarative_base()
-
-
-# PostgreSQL Models
-class Document(Base):
-    __tablename__ = "documents"
-    
-    id = Column(String, primary_key=True)
-    filename = Column(String, nullable=False)
-    full_text = Column(Text, nullable=False)
-    file_hash = Column(String, nullable=False, unique=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    chunk_count = Column(Integer, default=0)
-
-
-class Chunk(Base):
-    __tablename__ = "chunks"
-    
-    id = Column(String, primary_key=True)
-    document_id = Column(String, nullable=False, index=True)
-    chunk_index = Column(Integer, nullable=False)
-    text = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class RAGSystem:
+    """
+    RAG System for document storage and retrieval
+    Handles chunking, embedding generation, and similarity search
+    Database operations are delegated to DatabaseManager
+    """
+    
     def __init__(self, openai_client, embedding_model: Optional[str] = None, use_azure: bool = False):
         self.openai_client = openai_client
         self.embedding_model = embedding_model or EMBEDDING_MODEL
         self.embedding_dim = EMBEDDING_DIM
         self.use_azure = use_azure
         
-        # Initialize PostgreSQL
-        self._init_postgres()
-        
-        # Initialize Milvus Lite
-        self._init_milvus()
-    
-    def _init_postgres(self):
-        """Initialize PostgreSQL connection"""
-        db_url = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-        self.engine = create_engine(db_url, pool_pre_ping=True)
-        Base.metadata.create_all(self.engine)
-        self.SessionLocal = sessionmaker(bind=self.engine)
-        print(f"✅ Connected to PostgreSQL: {POSTGRES_DB}")
-    
-    def _init_milvus(self):
-        """Initialize Milvus Lite (local/embedded version)"""
-        # Use Milvus Lite with local file storage
-        self.milvus_client = MilvusClient(uri=MILVUS_LITE_PATH)
-        print(f"✅ Initialized Milvus Lite: {MILVUS_LITE_PATH}")
-        
-        # Check if collection exists, create if not
-        if not self.milvus_client.has_collection(MILVUS_COLLECTION):
-            # Create collection with vector dimension
-            self.milvus_client.create_collection(
-                collection_name=MILVUS_COLLECTION,
-                dimension=self.embedding_dim,
-                metric_type=MILVUS_METRIC_TYPE
-            )
-            print(f"✅ Created Milvus Lite collection: {MILVUS_COLLECTION}")
-            print(f"   Metric: {MILVUS_METRIC_TYPE}, Dimension: {self.embedding_dim}")
-        else:
-            print(f"✅ Using existing Milvus Lite collection: {MILVUS_COLLECTION}")
-        
-        self.collection_name = MILVUS_COLLECTION
+        # Initialize database manager
+        self.db_manager = DatabaseManager()
+        self.db_manager.initialize()
     
     def chunk_text(self, text: str, chunk_size: Optional[int] = None, chunk_overlap: Optional[int] = None) -> List[str]:
         """
@@ -146,7 +91,7 @@ class RAGSystem:
         Store document in PostgreSQL and chunks in Milvus Lite
         Returns document_id
         """
-        db: Session = self.SessionLocal()
+        db = self.db_manager.get_session()
         
         try:
             # Calculate file hash
@@ -191,25 +136,34 @@ class RAGSystem:
             db.commit()
             
             # Generate embeddings and store in Milvus Lite
+            print(f"📊 Generating embeddings for {len(chunks)} chunks...")
             insert_data = []
+            total_chunks = len(chunks)
+            
             for idx, chunk_text in enumerate(chunks):
+                # Show progress for embedding generation
+                progress = ((idx + 1) / total_chunks) * 100
+                print(f"   Generating embedding {idx + 1}/{total_chunks} ({progress:.1f}%)", end='\r')
+                
                 embedding = self.generate_embedding(chunk_text)
-                chunk_id = chunk_records[idx].id
+                chunk_id_str = chunk_records[idx].id
+                # Convert UUID string to int64 for Milvus
+                chunk_id_int = self.db_manager._uuid_to_int64(chunk_id_str)
                 
                 insert_data.append({
-                    "id": chunk_id,
-                    "vector": embedding,
-                    "document_id": doc_id,
-                    "chunk_index": idx,
-                    "text": chunk_text[:65535]  # Limit text length
+                    "id": chunk_id_int,  # Milvus requires int64
+                    "vector": embedding,  # Only embedding stored in Milvus
+                    "document_id": doc_id,  # Keep document_id for reference
+                    "chunk_index": idx  # Keep chunk_index for reference
+                    # Note: text is NOT stored in Milvus, only in PostgreSQL
                 })
             
-            # Insert into Milvus Lite
+            print()  # New line after progress
+            
+            # Insert into Milvus Lite using database manager
             if insert_data:
-                self.milvus_client.insert(
-                    collection_name=self.collection_name,
-                    data=insert_data
-                )
+                print(f"📤 Inserting {len(insert_data)} chunks into Milvus Lite...")
+                self.db_manager.insert_vectors(insert_data)
                 print(f"✅ Stored {len(insert_data)} chunks in Milvus Lite")
             
             print(f"✅ Stored document: {filename} (ID: {doc_id})")
@@ -226,6 +180,7 @@ class RAGSystem:
         """
         Search for similar chunks using vector similarity
         Returns list of relevant chunks with metadata
+        Text is retrieved from PostgreSQL, not Milvus
         Uses config values if top_k not provided
         """
         top_k = top_k or RAG_TOP_K
@@ -234,39 +189,53 @@ class RAGSystem:
             # Generate query embedding
             query_embedding = self.generate_embedding(query)
             
-            # Search in Milvus Lite
-            results = self.milvus_client.search(
-                collection_name=self.collection_name,
-                data=[query_embedding],
-                limit=top_k,
-                output_fields=["document_id", "chunk_index", "text"]
+            # Search in Milvus Lite using database manager (only get IDs and indices, no text)
+            results = self.db_manager.search_vectors(
+                query_vector=query_embedding,
+                top_k=top_k,
+                output_fields=["document_id", "chunk_index"]  # No text field - retrieve from PostgreSQL
             )
             
-            # Format results and filter by similarity threshold
+            # Format results and retrieve text from PostgreSQL
             similar_chunks = []
-            if results and len(results) > 0:
-                for hit in results[0]:
-                    # Milvus Lite returns results with distance and entity fields
-                    distance = hit.get("distance", 0)
-                    entity = hit.get("entity", {})
-                    
-                    # Convert distance to similarity score
-                    # For L2: lower is better, for cosine: higher is better
-                    if MILVUS_METRIC_TYPE == "L2":
-                        score = 1 / (1 + distance)
-                    else:
-                        score = 1 - distance  # For cosine similarity
-                    
-                    # Filter by similarity threshold
-                    if score >= RAG_SIMILARITY_THRESHOLD:
-                        similar_chunks.append({
-                            "id": hit.get("id"),
-                            "document_id": entity.get("document_id"),
-                            "chunk_index": entity.get("chunk_index"),
-                            "text": entity.get("text"),
-                            "distance": distance,
-                            "score": score
-                        })
+            db = self.db_manager.get_session()
+            
+            try:
+                if results:
+                    for hit in results:
+                        # Milvus Lite returns results with distance and entity fields
+                        distance = hit.get("distance", 0)
+                        entity = hit.get("entity", {})
+                        
+                        document_id = entity.get("document_id")
+                        chunk_index = entity.get("chunk_index")
+                        
+                        # Retrieve text from PostgreSQL using document_id and chunk_index
+                        chunk = db.query(Chunk).filter(
+                            Chunk.document_id == document_id,
+                            Chunk.chunk_index == chunk_index
+                        ).first()
+                        
+                        if chunk:
+                            # Convert distance to similarity score
+                            # For L2: lower is better, for cosine: higher is better
+                            if MILVUS_METRIC_TYPE == "L2":
+                                score = 1 / (1 + distance)
+                            else:
+                                score = 1 - distance  # For cosine similarity
+                            
+                            # Filter by similarity threshold
+                            if score >= RAG_SIMILARITY_THRESHOLD:
+                                similar_chunks.append({
+                                    "id": hit.get("id"),
+                                    "document_id": document_id,
+                                    "chunk_index": chunk_index,
+                                    "text": chunk.text,  # Retrieved from PostgreSQL
+                                    "distance": distance,
+                                    "score": score
+                                })
+            finally:
+                db.close()
             
             return similar_chunks
             
@@ -276,7 +245,7 @@ class RAGSystem:
     
     def get_document_text(self, document_id: str) -> Optional[str]:
         """Retrieve full document text from PostgreSQL"""
-        db: Session = self.SessionLocal()
+        db = self.db_manager.get_session()
         try:
             document = db.query(Document).filter(Document.id == document_id).first()
             return document.full_text if document else None
@@ -284,29 +253,98 @@ class RAGSystem:
             db.close()
     
     def delete_document(self, document_id: str):
-        """Delete document and all its chunks"""
-        db: Session = self.SessionLocal()
+        """Delete document and all its chunks from both databases"""
+        self.db_manager.delete_document(document_id)
+    
+    def clean_all_databases(self):
+        """Clean all data from both databases"""
+        self.db_manager.clean_all()
+    
+    def verify_synchronization(self) -> Dict[str, any]:
+        """Verify that PostgreSQL and Milvus databases are synchronized"""
+        return self.db_manager.verify()
+    
+    def resync_databases(self) -> Dict[str, any]:
+        """
+        Resynchronize databases by ensuring all PostgreSQL chunks exist in Milvus
+        This will re-insert any missing vectors into Milvus
+        """
+        db = self.db_manager.get_session()
+        resync_result = {
+            "success": True,
+            "documents_processed": 0,
+            "chunks_processed": 0,
+            "vectors_inserted": 0,
+            "errors": []
+        }
+        
         try:
-            # Get chunk IDs before deleting from PostgreSQL
-            chunks = db.query(Chunk).filter(Chunk.document_id == document_id).all()
-            chunk_ids = [chunk.id for chunk in chunks]
+            print("🔄 Resynchronizing databases...")
             
-            # Delete from PostgreSQL
-            db.query(Chunk).filter(Chunk.document_id == document_id).delete()
-            db.query(Document).filter(Document.id == document_id).delete()
-            db.commit()
+            # Get all documents and chunks from PostgreSQL
+            documents = db.query(Document).all()
+            all_chunks = db.query(Chunk).all()
             
-            # Delete from Milvus Lite
-            if chunk_ids:
-                self.milvus_client.delete(
-                    collection_name=self.collection_name,
-                    ids=chunk_ids
-                )
+            # Get existing vectors from Milvus
+            existing_vector_ids = set()
+            if self.db_manager.milvus_client.has_collection(self.db_manager.collection_name):
+                try:
+                    existing_vectors = self.db_manager.milvus_client.query(
+                        collection_name=self.db_manager.collection_name,
+                        filter="",
+                        limit=10000,
+                        output_fields=["id"]
+                    )
+                    if existing_vectors:
+                        existing_vector_ids = {v.get("id") if isinstance(v, dict) else getattr(v, "id", None) for v in existing_vectors}
+                except Exception as e:
+                    resync_result["errors"].append(f"Could not query existing Milvus vectors: {e}")
             
-            print(f"✅ Deleted document: {document_id}")
+            # Process each document
+            for doc in documents:
+                doc_chunks = [c for c in all_chunks if c.document_id == doc.id]
+                chunks_to_insert = []
+                
+                for chunk in doc_chunks:
+                    chunk_id_int = self.db_manager._uuid_to_int64(chunk.id)
+                    
+                    # Check if vector already exists in Milvus
+                    if chunk_id_int not in existing_vector_ids:
+                        # Generate embedding and prepare for insertion
+                        embedding = self.generate_embedding(chunk.text)
+                        chunks_to_insert.append({
+                            "id": chunk_id_int,
+                            "vector": embedding,  # Only embedding stored in Milvus
+                            "document_id": doc.id,
+                            "chunk_index": chunk.chunk_index
+                            # Note: text is NOT stored in Milvus, only in PostgreSQL
+                        })
+                
+                # Insert missing vectors
+                if chunks_to_insert:
+                    try:
+                        self.db_manager.insert_vectors(chunks_to_insert)
+                        resync_result["vectors_inserted"] += len(chunks_to_insert)
+                        print(f"   Inserted {len(chunks_to_insert)} missing vectors for document: {doc.filename}")
+                    except Exception as e:
+                        resync_result["errors"].append(f"Error inserting vectors for document {doc.id}: {e}")
+                        resync_result["success"] = False
+                
+                resync_result["chunks_processed"] += len(doc_chunks)
+                resync_result["documents_processed"] += 1
+            
+            print(f"✅ Resynchronization complete: {resync_result['vectors_inserted']} vectors inserted")
+            
         except Exception as e:
-            db.rollback()
-            print(f"Error deleting document: {e}")
-            raise
+            resync_result["success"] = False
+            resync_result["errors"].append(f"Error during resynchronization: {e}")
+            print(f"❌ Resynchronization failed: {e}")
         finally:
             db.close()
+        
+        return resync_result
+    
+    @property
+    def SessionLocal(self):
+        """Compatibility property for existing code"""
+        return self.db_manager.SessionLocal

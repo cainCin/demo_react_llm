@@ -11,7 +11,8 @@ from openai import OpenAI, AzureOpenAI
 from rag_system import RAGSystem
 from config import (
     RAG_ENABLED, LLM_TEMPERATURE, LLM_MAX_TOKENS, MAX_FILE_SIZE,
-    EMBEDDING_MODEL, RAG_TOP_K, CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_DIM
+    EMBEDDING_MODEL, RAG_TOP_K, CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_DIM,
+    LLM_TIMEOUT
 )
 
 # Load environment variables
@@ -40,19 +41,41 @@ use_azure = False
 if azure_endpoint and openai_api_key:
     # Use Azure OpenAI
     use_azure = True
-    openai_client = AzureOpenAI(
-        api_key=openai_api_key,
-        api_version=azure_api_version,
-        azure_endpoint=azure_endpoint.rstrip('/'),
-    )
-    print(f"✅ Initialized Azure OpenAI client")
-    print(f"   Endpoint: {azure_endpoint}")
-    print(f"   Deployment: {azure_deployment or 'Not specified (using model parameter)'}")
-    print(f"   API Version: {azure_api_version}")
+    try:
+        openai_client = AzureOpenAI(
+            api_key=openai_api_key,
+            api_version=azure_api_version,
+            azure_endpoint=azure_endpoint.rstrip('/'),
+            timeout=LLM_TIMEOUT,
+        )
+        print(f"✅ Initialized Azure OpenAI client")
+        print(f"   Endpoint: {azure_endpoint}")
+        print(f"   Deployment: {azure_deployment or 'Not specified (using model parameter)'}")
+        print(f"   API Version: {azure_api_version}")
+        print(f"   Timeout: {LLM_TIMEOUT}s")
+        
+        # Test connection with a simple API call (optional, may fail if models.list is not available)
+        try:
+            print("   Testing connection...")
+            # Try to list models - this is a lightweight operation
+            test_response = openai_client.models.list()
+            print("   ✅ Connection test successful")
+        except Exception as test_error:
+            # Connection test failure is not critical - the client is still initialized
+            # It might fail due to permissions or API version differences
+            print(f"   ⚠️  Connection test skipped (this is usually fine): {test_error}")
+    except Exception as init_error:
+        print(f"❌ Failed to initialize Azure OpenAI client: {init_error}")
+        openai_client = None
 elif openai_api_key:
     # Use standard OpenAI
-    openai_client = OpenAI(api_key=openai_api_key)
-    print("✅ Initialized standard OpenAI client")
+    try:
+        openai_client = OpenAI(api_key=openai_api_key, timeout=LLM_TIMEOUT)
+        print("✅ Initialized standard OpenAI client")
+        print(f"   Timeout: {LLM_TIMEOUT}s")
+    except Exception as init_error:
+        print(f"❌ Failed to initialize OpenAI client: {init_error}")
+        openai_client = None
 else:
     print("⚠️  No OpenAI API key configured")
 
@@ -205,10 +228,10 @@ async def list_documents():
     if not rag_system:
         raise HTTPException(status_code=400, detail="RAG system is not enabled")
     
-    from rag_system import Document
+    from database import Document
     from sqlalchemy.orm import Session
     
-    db: Session = rag_system.SessionLocal()
+    db: Session = rag_system.db_manager.get_session()
     try:
         documents = db.query(Document).order_by(Document.created_at.desc()).all()
         return {
@@ -237,6 +260,48 @@ async def delete_document(document_id: str):
         return {"status": "ok", "message": f"Document {document_id} deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
+
+
+@app.delete("/api/documents")
+async def clean_all_documents():
+    """Clean all documents from both databases (RAG system only)"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        rag_system.clean_all_databases()
+        return {"status": "ok", "message": "All documents cleaned from both databases"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error cleaning databases: {str(e)}")
+
+
+@app.get("/api/documents/sync")
+async def check_synchronization():
+    """Check if PostgreSQL and Milvus databases are synchronized (RAG system only)"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        # Use DatabaseManager's verify method
+        sync_status = rag_system.db_manager.verify()
+        status_code = 200 if sync_status["synchronized"] else 207  # 207 Multi-Status
+        return sync_status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error checking synchronization: {str(e)}")
+
+
+@app.post("/api/documents/resync")
+async def resync_databases():
+    """Resynchronize databases by ensuring all PostgreSQL chunks exist in Milvus (RAG system only)"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        resync_result = rag_system.resync_databases()
+        status_code = 200 if resync_result["success"] else 207
+        return resync_result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error resynchronizing databases: {str(e)}")
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -323,8 +388,37 @@ async def chat(request: ChatRequest):
             "max_tokens": LLM_MAX_TOKENS
         }
         
-        # Make the API call
-        response = openai_client.chat.completions.create(**api_params)
+        # Make the API call with timeout handling
+        try:
+            response = openai_client.chat.completions.create(**api_params)
+        except Exception as api_error:
+            error_str = str(api_error)
+            # Provide more specific error messages
+            if "timeout" in error_str.lower() or "timed out" in error_str.lower():
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Request to Azure OpenAI timed out after {LLM_TIMEOUT}s. The service may be slow or unavailable. Please try again."
+                )
+            elif "connection" in error_str.lower() or "network" in error_str.lower():
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Cannot connect to Azure OpenAI service. Please check your network connection and endpoint configuration."
+                )
+            elif "authentication" in error_str.lower() or "unauthorized" in error_str.lower() or "401" in error_str:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Azure OpenAI authentication failed. Please check your API key and endpoint configuration."
+                )
+            elif "rate limit" in error_str.lower() or "429" in error_str:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Azure OpenAI rate limit exceeded. Please try again later."
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error calling Azure OpenAI API: {error_str}"
+                )
         
         # Extract the assistant's message
         assistant_message = response.choices[0].message.content
@@ -334,10 +428,13 @@ async def chat(request: ChatRequest):
             model=model_to_use
         )
     
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error calling LLM API: {str(e)}"
+            detail=f"Unexpected error: {str(e)}"
         )
 
 

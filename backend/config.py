@@ -37,6 +37,7 @@ MILVUS_METRIC_TYPE = os.getenv("MILVUS_METRIC_TYPE", "L2")  # Distance metric: L
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "500"))
 LLM_TOP_P = float(os.getenv("LLM_TOP_P", "1.0"))
+LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "60.0"))  # Timeout in seconds for API calls
 
 # ============================================
 # File Upload Configuration
