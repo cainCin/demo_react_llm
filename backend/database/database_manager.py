@@ -5,8 +5,11 @@ Handles PostgreSQL and Milvus Lite database operations, synchronization, and ver
 import os
 import hashlib
 import struct
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from database.models import VerificationResult, VectorData
 from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -159,7 +162,7 @@ class DatabaseManager:
         General verification method - checks both databases and synchronization
         Returns comprehensive verification status as VerificationResult data class
         """
-        from database import VerificationResult, DocumentListItem
+        from database.models import VerificationResult, DocumentListItem
         
         verification_result = VerificationResult(
             postgres_connected=False,
@@ -337,6 +340,8 @@ class DatabaseManager:
         
         if vectors_data:
             # Convert VectorData objects to dicts for Milvus
+            # Import here to avoid circular imports
+            from database.models import VectorData as VectorDataClass
             clean_data = [vec.to_dict() for vec in vectors_data]
             
             self.milvus_client.insert(

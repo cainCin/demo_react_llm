@@ -8,7 +8,8 @@ import hashlib
 from typing import List, Optional, Dict
 from database import (
     DatabaseManager, Document, Chunk,
-    DocumentData, ChunkData, VectorData, SearchResult
+    DocumentData, ChunkData, VectorData, SearchResult,
+    VerificationResult, ResyncResult
 )
 from config import (
     CHUNK_SIZE, CHUNK_OVERLAP, CHUNK_MIN_SIZE,
