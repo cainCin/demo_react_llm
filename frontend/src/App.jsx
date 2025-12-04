@@ -15,10 +15,17 @@ function App() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [backendConnected, setBackendConnected] = useState(null)
+  const [healthStatus, setHealthStatus] = useState({
+    connected: null,
+    ragEnabled: false,
+    lastCheck: null,
+    error: null
+  })
   const [attachedFiles, setAttachedFiles] = useState([])
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef(null)
   const messagesEndRef = useRef(null)
+  const healthCheckIntervalRef = useRef(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -28,24 +35,56 @@ function App() {
     scrollToBottom()
   }, [messages])
 
-  // Check backend connection on mount
+  // Real-time health check - runs every second
   useEffect(() => {
     const checkBackend = async () => {
       try {
         // Use health endpoint through proxy
-        const healthUrl = API_URL ? `${API_URL}/health` : '/api/health'
-        const response = await axios.get(healthUrl, { timeout: 3000 })
+        const healthUrl = API_URL ? `${API_URL}/api/health` : '/api/health'
+        const response = await axios.get(healthUrl, { timeout: 2000 })
         if (response.data && response.data.status === 'ok') {
           setBackendConnected(true)
+          setHealthStatus({
+            connected: true,
+            ragEnabled: response.data.rag_enabled || false,
+            lastCheck: new Date(),
+            error: null
+          })
         } else {
           setBackendConnected(false)
+          setHealthStatus(prev => ({
+            ...prev,
+            connected: false,
+            lastCheck: new Date(),
+            error: 'Invalid response'
+          }))
         }
       } catch (error) {
         console.warn('Backend connection check failed:', error)
         setBackendConnected(false)
+        setHealthStatus(prev => ({
+          ...prev,
+          connected: false,
+          lastCheck: new Date(),
+          error: error.code === 'ECONNABORTED' ? 'Timeout' : 
+                 error.code === 'ERR_NETWORK' ? 'Network Error' : 
+                 'Connection Failed'
+        }))
       }
     }
+
+    // Initial check
     checkBackend()
+
+    // Set up interval to check every second
+    healthCheckIntervalRef.current = setInterval(checkBackend, 1000)
+
+    // Cleanup interval on unmount
+    return () => {
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current)
+      }
+    }
   }, [])
 
   const handleFileSelect = async (e) => {
@@ -159,16 +198,42 @@ function App() {
       <div className="chatbox-header">
         <h1>💬 AI Chatbox</h1>
         <p>Powered by LLM API</p>
-        {backendConnected === false && (
-          <p style={{ fontSize: '12px', marginTop: '5px', opacity: 0.9 }}>
-            ⚠️ Backend not connected. Make sure the backend server is running on port 8000.
-          </p>
-        )}
-        {backendConnected === true && (
-          <p style={{ fontSize: '12px', marginTop: '5px', opacity: 0.9 }}>
-            ✅ Backend connected
-          </p>
-        )}
+        <div className="health-status-container">
+          {healthStatus.connected === true && (
+            <div className="health-status health-connected">
+              <span className="health-indicator pulse"></span>
+              <span className="health-text">
+                ✅ Backend connected
+                {healthStatus.ragEnabled && <span className="rag-badge">RAG</span>}
+              </span>
+              {healthStatus.lastCheck && (
+                <span className="health-timestamp">
+                  {new Date(healthStatus.lastCheck).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+          )}
+          {healthStatus.connected === false && (
+            <div className="health-status health-disconnected">
+              <span className="health-indicator"></span>
+              <span className="health-text">
+                ⚠️ Backend disconnected
+                {healthStatus.error && <span className="health-error">({healthStatus.error})</span>}
+              </span>
+              {healthStatus.lastCheck && (
+                <span className="health-timestamp">
+                  Last check: {new Date(healthStatus.lastCheck).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+          )}
+          {healthStatus.connected === null && (
+            <div className="health-status health-checking">
+              <span className="health-indicator pulse"></span>
+              <span className="health-text">🔄 Checking connection...</span>
+            </div>
+          )}
+        </div>
       </div>
       
       <div className="chatbox-messages">

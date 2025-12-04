@@ -26,6 +26,110 @@
   opacity: 0.9;
 }
 
+.health-status-container {
+  margin-top: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.health-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+}
+
+.health-status.health-connected {
+  background: rgba(46, 213, 115, 0.2);
+  border: 1px solid rgba(46, 213, 115, 0.4);
+}
+
+.health-status.health-disconnected {
+  background: rgba(231, 76, 60, 0.2);
+  border: 1px solid rgba(231, 76, 60, 0.4);
+}
+
+.health-status.health-checking {
+  background: rgba(255, 193, 7, 0.2);
+  border: 1px solid rgba(255, 193, 7, 0.4);
+}
+
+.health-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.health-status.health-connected .health-indicator {
+  background: #2ed573;
+  box-shadow: 0 0 8px rgba(46, 213, 115, 0.6);
+}
+
+.health-status.health-disconnected .health-indicator {
+  background: #e74c3c;
+  box-shadow: 0 0 8px rgba(231, 76, 60, 0.6);
+}
+
+.health-status.health-checking .health-indicator {
+  background: #ffc107;
+  box-shadow: 0 0 8px rgba(255, 193, 7, 0.6);
+}
+
+.health-indicator.pulse {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.2);
+  }
+}
+
+.health-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.rag-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  background: rgba(102, 126, 234, 0.3);
+  border: 1px solid rgba(102, 126, 234, 0.5);
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.health-timestamp {
+  font-size: 10px;
+  opacity: 0.7;
+  margin-left: auto;
+  font-family: 'Courier New', monospace;
+}
+
+.health-error {
+  font-size: 10px;
+  opacity: 0.8;
+  font-style: italic;
+}
+
 .chatbox-messages {
   flex: 1;
   overflow-y: auto;
