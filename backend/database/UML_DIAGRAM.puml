@@ -1,0 +1,192 @@
+@startuml Database Architecture
+
+!define POSTGRES_COLOR #4A90E2
+!define MILVUS_COLOR #00D4AA
+!define DATACLASS_COLOR #FFB84D
+!define MANAGER_COLOR #9B59B6
+
+package "Database Package" {
+    
+    class DatabaseManager <<Manager>> MANAGER_COLOR {
+        -engine: Engine
+        -SessionLocal: sessionmaker
+        -milvus_client: MilvusClient
+        -collection_name: str
+        -embedding_dim: int
+        -_postgres_initialized: bool
+        -_milvus_initialized: bool
+        +initialize()
+        +get_session(): Session
+        +verify(): VerificationResult
+        +clean_all()
+        +delete_document(document_id: str)
+        +insert_vectors(vectors_data: List[VectorData])
+        +search_vectors(query_vector, top_k, output_fields): List
+        +close()
+        --{static}
+        +_uuid_to_int64(uuid_str: str): int
+    }
+    
+    package "PostgreSQL ORM Models" POSTGRES_COLOR {
+        class Document <<ORM>> {
+            +id: String [PK]
+            +filename: String
+            +full_text: Text
+            +file_hash: String [UNIQUE]
+            +created_at: DateTime
+            +chunk_count: Integer
+        }
+        
+        class Chunk <<ORM>> {
+            +id: String [PK]
+            +document_id: String [FK, INDEX]
+            +chunk_index: Integer
+            +text: Text
+            +created_at: DateTime
+        }
+    }
+    
+    package "Milvus Lite" MILVUS_COLOR {
+        class MilvusCollection <<Collection>> {
+            +collection_name: "chatbox_vectors"
+            +dimension: int
+            +metric_type: str
+            --
+            +id: int64 [PK]
+            +vector: List[float]
+            +document_id: str
+            +chunk_index: int
+            --
+            Note: text is NOT stored in Milvus
+            Note: Only embeddings and metadata
+        }
+    }
+    
+    package "Data Classes" DATACLASS_COLOR {
+        class DocumentData <<DataClass>> {
+            +id: str
+            +filename: str
+            +full_text: str
+            +file_hash: str
+            +created_at: Optional[datetime]
+            +chunk_count: int
+            +to_dict(): Dict
+            +from_orm(orm_doc): DocumentData
+        }
+        
+        class ChunkData <<DataClass>> {
+            +id: str
+            +document_id: str
+            +chunk_index: int
+            +text: str
+            +created_at: Optional[datetime]
+            +to_dict(): Dict
+            +from_orm(orm_chunk): ChunkData
+        }
+        
+        class VectorData <<DataClass>> {
+            +id: int [int64]
+            +vector: List[float]
+            +document_id: str
+            +chunk_index: int
+            +to_dict(): Dict
+            Note: No text field
+            Note: UUID string converted to int64
+        }
+        
+        class SearchResult <<DataClass>> {
+            +id: int
+            +document_id: str
+            +chunk_index: int
+            +text: str
+            +distance: float
+            +score: float
+            +to_dict(): Dict
+            Note: Composite from Milvus + PostgreSQL
+        }
+        
+        class VerificationResult <<DataClass>> {
+            +postgres_connected: bool
+            +milvus_connected: bool
+            +synchronized: bool
+            +postgres_documents: int
+            +postgres_chunks: int
+            +milvus_vectors: int
+            +issues: List[str]
+            +details: Dict
+            +to_dict(): Dict
+        }
+        
+        class ResyncResult <<DataClass>> {
+            +success: bool
+            +documents_processed: int
+            +chunks_processed: int
+            +vectors_inserted: int
+            +errors: List[str]
+            +to_dict(): Dict
+        }
+        
+        class DocumentListItem <<DataClass>> {
+            +id: str
+            +filename: str
+            +chunk_count: int
+            +created_at: Optional[datetime]
+            +to_dict(): Dict
+            +from_orm(orm_doc): DocumentListItem
+            Note: Lightweight subset of Document
+        }
+    }
+}
+
+' Relationships
+Document ||--o{ Chunk : "has many"
+DocumentData ..|> Document : "from_orm()"
+ChunkData ..|> Chunk : "from_orm()"
+DocumentListItem ..|> Document : "from_orm() (subset)"
+
+DatabaseManager --> Document : "manages"
+DatabaseManager --> Chunk : "manages"
+DatabaseManager --> MilvusCollection : "manages"
+
+VectorData ..> MilvusCollection : "inserts into"
+ChunkData ..> VectorData : "converts to"
+SearchResult ..> MilvusCollection : "queries from"
+SearchResult ..> Chunk : "retrieves text from"
+
+DatabaseManager --> VerificationResult : "returns"
+DatabaseManager --> ResyncResult : "returns"
+
+note right of DocumentData
+    Synchronized with Document ORM:
+    - All fields match
+    - from_orm() converts ORM → DataClass
+    - to_dict() serializes for API
+end note
+
+note right of ChunkData
+    Synchronized with Chunk ORM:
+    - All fields match
+    - from_orm() converts ORM → DataClass
+    - to_dict() serializes for API
+end note
+
+note right of VectorData
+    Milvus Schema:
+    - id: int64 (hashed from UUID)
+    - vector: List[float]
+    - document_id: str
+    - chunk_index: int
+    - NO text field (stored in PostgreSQL)
+end note
+
+note right of DatabaseManager
+    Responsibilities:
+    1. Initialize PostgreSQL & Milvus
+    2. Synchronize data between DBs
+    3. Verify database state
+    4. Convert UUID → int64 for Milvus
+    5. Ensure text only in PostgreSQL
+end note
+
+@enduml
+

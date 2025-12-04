@@ -10,6 +10,9 @@ database/
 ├── database_manager.py      # Core database management class
 ├── models.py                # Data classes for type-safe data handling
 ├── verify_databases.py      # Database verification and CSV export script
+├── verify_synchronization.py # Data class synchronization verification
+├── UML_DIAGRAM.puml         # PlantUML diagram of database architecture
+├── SYNCHRONIZATION_REPORT.md # Detailed synchronization verification report
 ├── README.md               # This file
 ├── QUICK_START.md          # Quick reference guide
 └── DATA_CLASSES.md         # Data classes documentation
@@ -45,457 +48,163 @@ The database system uses a dual-database architecture:
 - **Collection**: `chatbox_vectors` (configurable)
 - **Data Stored**: 
   - `id` (int64): Chunk identifier (hashed UUID)
-  - `vector` (float array): Embedding vector
-  - `document_id` (string): Reference to document
-  - `chunk_index` (int): Position in document
-  - **Note**: Text is NOT stored in Milvus, only embeddings
+  - `vector`: Embedding vector (List[float])
+  - `document_id`: Reference to document
+  - `chunk_index`: Position in document
+- **Important**: Text is **NOT** stored in Milvus, only embeddings
 
-### Design Principle
-- **Milvus**: Embeddings only (for fast vector search)
-- **PostgreSQL**: All text data (single source of truth)
+## 🔄 Data Synchronization
 
-## 🔧 Setup
+### Key Principles
 
-### Prerequisites
+1. **Text Separation**: Text is stored **only** in PostgreSQL, never in Milvus
+2. **ID Conversion**: UUID strings (PostgreSQL) are hashed to int64 (Milvus)
+3. **Synchronization**: Both databases must be kept in sync
+4. **Verification**: Use `verify()` to check synchronization status
 
-1. **PostgreSQL**: Running in Docker container
-   ```bash
-   cd backend
-   bash setup_databases.sh
-   ```
+### Synchronization Flow
 
-2. **Environment Variables**: Configure in `backend/.env`
-   ```env
-   # PostgreSQL Configuration
-   POSTGRES_HOST=localhost
-   POSTGRES_PORT=5432
-   POSTGRES_DB=chatbox_rag
-   POSTGRES_USER=postgres
-   POSTGRES_PASSWORD=postgres
-
-   # Milvus Lite Configuration
-   MILVUS_LITE_PATH=./milvus_lite.db
-   MILVUS_COLLECTION=chatbox_vectors
-   MILVUS_METRIC_TYPE=L2
-   EMBEDDING_DIM=1536
-   ```
-
-### Installation
-
-The database package is automatically available when the backend is set up:
-
-```bash
-cd backend
-pip install -r requirements.txt
+```
+Document Upload
+    ↓
+PostgreSQL: Store Document + Chunks (with text)
+    ↓
+Generate Embeddings
+    ↓
+Milvus: Store VectorData (embeddings only, no text)
+    ↓
+Search Query
+    ↓
+Milvus: Returns document_id, chunk_index, distance
+    ↓
+PostgreSQL: Retrieves text using document_id + chunk_index
+    ↓
+SearchResult: Combines Milvus metadata + PostgreSQL text
 ```
 
-## 📚 Usage
+## 📊 UML Diagram
 
-### DatabaseManager Class
+See [UML_DIAGRAM.puml](UML_DIAGRAM.puml) for a complete PlantUML diagram showing:
+- ORM models (Document, Chunk)
+- Data classes (DocumentData, ChunkData, VectorData, etc.)
+- DatabaseManager relationships
+- Data flow between PostgreSQL and Milvus
 
-The `DatabaseManager` class handles all database operations:
+To view the diagram:
+- Use PlantUML: `plantuml UML_DIAGRAM.puml`
+- Or use online viewer: http://www.plantuml.com/plantuml/uml/
+
+## ✅ Synchronization Verification
+
+All data classes are verified to be synchronized with their ORM models. See:
+- [SYNCHRONIZATION_REPORT.md](SYNCHRONIZATION_REPORT.md) - Detailed verification report
+- `verify_synchronization.py` - Automated verification script
+
+### Verification Status
+
+✅ **All data classes are fully synchronized:**
+- DocumentData ↔ Document ORM
+- ChunkData ↔ Chunk ORM
+- DocumentListItem ↔ Document ORM (subset)
+- VectorData ↔ Milvus schema
+- All classes have `to_dict()` and `from_orm()` methods where applicable
+
+## 🔧 Usage
+
+### Basic Operations
 
 ```python
-from database import DatabaseManager
+from database import DatabaseManager, DocumentData, ChunkData, VectorData
 
 # Initialize
 db_manager = DatabaseManager()
 db_manager.initialize()
 
-# Get a database session
+# Get session
 db = db_manager.get_session()
 
-# Insert vectors into Milvus
-vectors_data = [
-    {
-        "id": 1234567890,  # int64
-        "vector": [0.1, 0.2, ...],  # embedding
-        "document_id": "doc-uuid",
-        "chunk_index": 0
-    }
-]
-db_manager.insert_vectors(vectors_data)
+# Query documents
+documents = db.query(Document).all()
 
-# Search vectors
-results = db_manager.search_vectors(
-    query_vector=[0.1, 0.2, ...],
-    top_k=5,
-    output_fields=["document_id", "chunk_index"]
-)
+# Convert to data class
+doc_data = DocumentData.from_orm(documents[0])
 
-# Verify databases
-verification = db_manager.verify()
+# Insert vectors
+vectors = [VectorData(id=1, vector=[0.1, 0.2, ...], document_id="...", chunk_index=0)]
+db_manager.insert_vectors(vectors)
 
-# Clean all data
-db_manager.clean_all()
-
-# Delete a document
-db_manager.delete_document("document-id")
-```
-
-### Models
-
-#### Document Model
-```python
-from database import Document
-
-# Document fields:
-# - id: str (UUID)
-# - filename: str
-# - full_text: str
-# - file_hash: str (MD5)
-# - created_at: datetime
-# - chunk_count: int
-```
-
-#### Chunk Model
-```python
-from database import Chunk
-
-# Chunk fields:
-# - id: str (UUID)
-# - document_id: str
-# - chunk_index: int
-# - text: str
-# - created_at: datetime
-```
-
-## 🔍 Verification Script
-
-### Basic Usage
-
-```bash
-cd backend
-python database/verify_databases.py
-```
-
-### Export to CSV
-
-```bash
-# Default output (database_verification.csv)
-python database/verify_databases.py
-
-# Custom output file
-python database/verify_databases.py --output my_report.csv
-python database/verify_databases.py -o my_report.csv
-
-# Skip CSV export (console only)
-python database/verify_databases.py --no-export
-```
-
-### CSV Output Format
-
-The CSV includes synchronized data from both databases:
-
-| Column | Description |
-|--------|-------------|
-| `document_id` | Document UUID |
-| `document_filename` | Original filename |
-| `document_created_at` | Creation timestamp |
-| `document_file_hash` | MD5 hash |
-| `document_chunk_count` | Number of chunks |
-| `document_full_text_length` | Full text length |
-| `postgres_chunk_id` | PostgreSQL chunk UUID |
-| `postgres_chunk_index` | Chunk position |
-| `postgres_chunk_text` | **Full chunk text** |
-| `postgres_chunk_created_at` | Chunk creation time |
-| `postgres_exists` | Yes/No |
-| `milvus_vector_id` | Milvus vector ID (int64) |
-| `milvus_chunk_index` | Chunk index in Milvus |
-| `milvus_exists` | Yes/No |
-| `synchronized` | Yes/No |
-| `sync_notes` | Status notes |
-
-## 🌐 API Endpoints
-
-### List Documents
-
-```bash
-curl -X GET http://localhost:8000/api/documents
-```
-
-**Response:**
-```json
-{
-  "documents": [
-    {
-      "id": "uuid",
-      "filename": "example.txt",
-      "chunk_count": 10,
-      "created_at": "2024-01-01T00:00:00"
-    }
-  ]
-}
-```
-
-### Delete Document
-
-```bash
-curl -X DELETE http://localhost:8000/api/documents/{document_id}
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "message": "Document {document_id} deleted"
-}
-```
-
-### Clean All Databases
-
-```bash
-curl -X DELETE http://localhost:8000/api/documents
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "message": "All documents cleaned from both databases"
-}
-```
-
-### Check Synchronization
-
-```bash
-curl -X GET http://localhost:8000/api/documents/sync
-```
-
-**Response:**
-```json
-{
-  "postgres_connected": true,
-  "milvus_connected": true,
-  "synchronized": true,
-  "postgres_documents": 5,
-  "postgres_chunks": 50,
-  "milvus_vectors": 50,
-  "issues": []
-}
-```
-
-### Resynchronize Databases
-
-```bash
-curl -X POST http://localhost:8000/api/documents/resync
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "documents_processed": 5,
-  "chunks_processed": 50,
-  "vectors_inserted": 0,
-  "errors": []
-}
-```
-
-## 📝 Script Examples
-
-### Python Script: Verify Databases
-
-```python
-#!/usr/bin/env python3
-from database import DatabaseManager
-
-# Initialize
-db_manager = DatabaseManager()
-db_manager.initialize()
-
-# Verify
+# Verify synchronization
 result = db_manager.verify()
-print(f"PostgreSQL: {result['postgres_connected']}")
-print(f"Milvus: {result['milvus_connected']}")
-print(f"Synchronized: {result['synchronized']}")
-print(f"PostgreSQL chunks: {result['postgres_chunks']}")
-print(f"Milvus vectors: {result['milvus_vectors']}")
-
-if result['issues']:
-    print("Issues found:")
-    for issue in result['issues']:
-        print(f"  - {issue}")
+print(result.to_dict())
 ```
-
-### Python Script: Clean Databases
-
-```python
-#!/usr/bin/env python3
-from database import DatabaseManager
-
-db_manager = DatabaseManager()
-db_manager.initialize()
-db_manager.clean_all()
-print("All databases cleaned")
-```
-
-### Python Script: Export to CSV
-
-```python
-#!/usr/bin/env python3
-import sys
-sys.path.insert(0, 'backend')
-
-from database import DatabaseManager
-from database.verify_databases import export_to_csv
-
-db_manager = DatabaseManager()
-db_manager.initialize()
-export_to_csv(db_manager, "my_export.csv")
-```
-
-## 🔄 Synchronization
-
-### How It Works
-
-1. **Storage**: When a document is stored:
-   - Text → PostgreSQL (chunks table)
-   - Embeddings → Milvus (vectors)
-
-2. **Search**: When searching:
-   - Query → Generate embedding
-   - Search Milvus → Get similar vectors (with document_id, chunk_index)
-   - Query PostgreSQL → Retrieve text using document_id and chunk_index
-
-3. **Synchronization**: Records are matched by `(document_id, chunk_index)`
 
 ### Verification
 
-The verification process checks:
-- Connection status for both databases
-- Record counts match
-- Each PostgreSQL chunk has a corresponding Milvus vector
-- Identifies missing records in either database
-
-### Resynchronization
-
-If databases are out of sync:
-1. Identifies missing vectors in Milvus
-2. Generates embeddings for missing chunks
-3. Inserts missing vectors into Milvus
-4. Reports results
-
-## 🛠️ Troubleshooting
-
-### PostgreSQL Connection Issues
-
-```bash
-# Check if container is running
-docker ps -a --filter 'name=chatbox-postgres'
-
-# Start container if stopped
-docker start chatbox-postgres
-
-# Check logs
-docker logs chatbox-postgres
+```python
+# Check synchronization
+verification = db_manager.verify()
+if not verification.synchronized:
+    print(f"Issues: {verification.issues}")
+    
+# Resynchronize if needed
+resync_result = db_manager.resync_databases()
 ```
 
-### Milvus Issues
+## 📝 API Endpoints
 
+The database manager is used by the RAG system and exposed through FastAPI:
+
+- `GET /api/documents` - List all documents
+- `DELETE /api/documents/{document_id}` - Delete document
+- `DELETE /api/documents` - Delete all documents
+- `GET /api/verify` - Verify database synchronization
+- `POST /api/resync` - Resynchronize databases
+
+## 🔍 Verification Scripts
+
+### Database Verification
 ```bash
-# Check if database file exists
-ls -la backend/milvus_lite.db
-
-# Verify pymilvus version
-pip show pymilvus
-
-# Upgrade if needed
-pip install --upgrade 'pymilvus>=2.4.2'
+python backend/database/verify_databases.py
 ```
+
+### Synchronization Verification
+```bash
+python backend/database/verify_synchronization.py
+```
+
+## 📚 Documentation
+
+- [DATA_CLASSES.md](DATA_CLASSES.md) - Data class reference
+- [QUICK_START.md](QUICK_START.md) - Quick start guide
+- [SYNCHRONIZATION_REPORT.md](SYNCHRONIZATION_REPORT.md) - Synchronization verification
+- [UML_DIAGRAM.puml](UML_DIAGRAM.puml) - Architecture diagram
+
+## ⚠️ Important Notes
+
+1. **Text Storage**: Text is stored **only** in PostgreSQL. Milvus contains **only** embeddings.
+2. **ID Types**: PostgreSQL uses UUID strings, Milvus uses int64 (hashed from UUID).
+3. **Synchronization**: Always use `verify()` before critical operations.
+4. **Cleanup**: Use `clean_all()` to remove all data from both databases.
+
+## 🐛 Troubleshooting
 
 ### Synchronization Issues
 
-```bash
-# Check synchronization status
-curl http://localhost:8000/api/documents/sync
+If verification shows synchronization problems:
 
-# Resynchronize if needed
-curl -X POST http://localhost:8000/api/documents/resync
+1. Check the verification report: `python backend/database/verify_databases.py`
+2. Resynchronize: `POST /api/resync`
+3. Check logs for errors during insertion
 
-# Export to CSV for analysis
-python database/verify_databases.py -o sync_report.csv
-```
+### ID Type Errors
 
-## 📊 Database Schema
+If you see Milvus ID type errors:
+- Ensure UUID strings are converted to int64 using `_uuid_to_int64()`
+- Check that VectorData uses `id: int` (not `str`)
 
-### PostgreSQL Schema
+### Missing Text in Search Results
 
-```sql
--- Documents table
-CREATE TABLE documents (
-    id VARCHAR PRIMARY KEY,
-    filename VARCHAR NOT NULL,
-    full_text TEXT NOT NULL,
-    file_hash VARCHAR NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    chunk_count INTEGER DEFAULT 0
-);
-
--- Chunks table
-CREATE TABLE chunks (
-    id VARCHAR PRIMARY KEY,
-    document_id VARCHAR NOT NULL,
-    chunk_index INTEGER NOT NULL,
-    text TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_chunks_document_id ON chunks(document_id);
-```
-
-### Milvus Schema
-
-```
-Collection: chatbox_vectors
-Fields:
-  - id: int64 (primary key, hashed from UUID)
-  - vector: float vector (dimension: 1536)
-  - document_id: varchar
-  - chunk_index: int32
-```
-
-## 🔐 Security Notes
-
-- PostgreSQL credentials are stored in `.env` file (never commit this)
-- Milvus Lite is local file-based (no network access needed)
-- Use environment variables for all sensitive configuration
-- Database connections use connection pooling
-
-## 📖 Additional Resources
-
-- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-- [Milvus Documentation](https://milvus.io/docs)
-- [pymilvus Documentation](https://milvus.io/api-reference/pymilvus/v2.4.x/About.md)
-
-## 🐛 Common Issues
-
-### Issue: "Connection refused" to PostgreSQL
-**Solution**: Ensure Docker container is running
-```bash
-docker start chatbox-postgres
-```
-
-### Issue: "Illegal uri" for Milvus
-**Solution**: Ensure path ends with `.db` and pymilvus >= 2.4.2
-```bash
-pip install --upgrade 'pymilvus>=2.4.2'
-```
-
-### Issue: Count mismatch between databases
-**Solution**: Run resynchronization
-```bash
-curl -X POST http://localhost:8000/api/documents/resync
-```
-
-### Issue: Text not found in search results
-**Solution**: Ensure text is retrieved from PostgreSQL (not Milvus). The system automatically does this, but verify the chunk exists in PostgreSQL.
-
-## 📞 Support
-
-For issues or questions:
-1. Check the troubleshooting section above
-2. Run verification script: `python database/verify_databases.py`
-3. Check API status: `curl http://localhost:8000/api/documents/sync`
-4. Review logs in the backend console
-
+If search results don't have text:
+- Verify PostgreSQL connection
+- Check that chunks exist in PostgreSQL with matching `document_id` and `chunk_index`
+- Ensure `search_similar()` retrieves text from PostgreSQL after Milvus search
