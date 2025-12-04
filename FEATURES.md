@@ -7,7 +7,8 @@ This document provides detailed documentation for key features of the Chatbox Ap
 1. [Session Management](#session-management)
 2. [Reference Chunk Selection](#reference-chunk-selection)
 3. [Chunk Viewer](#chunk-viewer)
-4. [API Reference](#api-reference)
+4. [Database Backup & Restore](#database-backup--restore)
+5. [API Reference](#api-reference)
 
 ---
 
@@ -330,6 +331,111 @@ If chunk text is missing (e.g., when loading from session logs):
 
 ---
 
+## 💾 Database Backup & Restore
+
+### Overview
+
+The Chatbox App includes automatic database backup and restore functionality for PostgreSQL and Milvus Lite databases. Backups are created automatically on app shutdown, and only the latest backup is kept to save storage space.
+
+### Key Features
+
+- **Automatic Backup on Shutdown**: Creates backups when the app closes (Ctrl+C, SIGTERM, or normal exit)
+- **Latest Backup Only**: Automatically deletes old backups, keeping only the most recent one
+- **Manual Backup**: Create backups at any time using API endpoints
+- **Restore on Startup**: Optionally restore from the latest backup when the app starts
+- **Individual Database Backup**: Backup PostgreSQL or Milvus Lite separately
+- **Metadata Tracking**: Backup metadata stored in JSON files
+
+### How It Works
+
+#### Backup Process
+
+1. **On App Shutdown**:
+   - If `BACKUP_ON_SHUTDOWN=true`, backup is triggered automatically
+   - PostgreSQL: Uses `pg_dump` to create compressed SQL dump
+   - Milvus Lite: Copies the `.db` file
+   - Old backups are deleted before creating new ones
+   - Only the latest backup is kept
+
+2. **Manual Backup**:
+   - Use `POST /api/backup` to create backup at any time
+   - Same cleanup process applies (old backups deleted)
+
+#### Restore Process
+
+1. **On App Startup**:
+   - If `RESTORE_ON_START=true`, restore is triggered before database initialization
+   - Finds the latest backup by timestamp
+   - Restores both PostgreSQL and Milvus Lite databases
+   - Optionally drops existing database before restore
+
+2. **Manual Restore**:
+   - Use `POST /api/restore` to restore from a specific backup
+   - Specify backup timestamp to restore
+
+### Backup Structure
+
+```
+backups/
+├── postgres/
+│   └── postgres_backup_YYYYMMDD_HHMMSS.sql  (only latest)
+├── milvus/
+│   └── milvus_backup_YYYYMMDD_HHMMSS.db     (only latest)
+└── metadata/
+    └── shutdown_backup_YYYYMMDD_HHMMSS.json
+```
+
+### Configuration
+
+Add to `backend/.env`:
+
+```env
+# Database Backup Configuration
+BACKUP_DIR=./backups                    # Backup storage directory
+BACKUP_ON_SHUTDOWN=true                 # Enable automatic backup on shutdown
+RESTORE_ON_START=false                  # Restore from backup on startup (use with caution!)
+```
+
+### Requirements
+
+**Docker** (required for PostgreSQL backups):
+- The backup system automatically uses Docker exec when the PostgreSQL container is available
+- This ensures version compatibility and eliminates version mismatch issues
+- **Fallback**: If Docker is not available, local `pg_dump` is used (requires matching version)
+
+**Note**: Milvus Lite backups don't require additional tools (file copy only).
+
+### Use Cases
+
+1. **Development**: Restore to a known good state after testing
+2. **Production**: Automatic backup on shutdown ensures data is saved
+3. **Migration**: Backup before major changes, restore if needed
+4. **Recovery**: Restore from backup if database corruption occurs
+
+### Best Practices
+
+1. **Regular Backups**: Keep `BACKUP_ON_SHUTDOWN=true` for automatic backups
+2. **Test Restores**: Periodically test restore functionality
+3. **Backup Location**: Store backups in a safe location (consider external backup)
+4. **Monitor Storage**: Latest backup only keeps storage usage minimal
+5. **Restore Carefully**: Only enable `RESTORE_ON_START=true` when needed
+
+### Troubleshooting
+
+**Issue**: Backup fails with "pg_dump not found"
+- **Solution**: Install PostgreSQL client tools (see Requirements above)
+
+**Issue**: Backup takes too long
+- **Solution**: This is normal for large databases. Backups run on shutdown, so they don't block app usage.
+
+**Issue**: Restore fails
+- **Solution**: Check backup files exist in `backups/` directory. Verify PostgreSQL is running.
+
+**Issue**: Old backups not deleted
+- **Solution**: Check file permissions on `backups/` directory. Ensure app has write access.
+
+---
+
 ## 🔌 API Reference
 
 ### Session Management Endpoints
@@ -500,6 +606,165 @@ Send a chat message (now includes session management).
 - If `session_id` is not provided, a new session is automatically created
 - `selected_chunks` filters which chunks are used as context
 - Session data is saved asynchronously (background task)
+
+### Backup Endpoints
+
+#### `POST /api/backup`
+
+Create a backup of both PostgreSQL and Milvus Lite databases.
+
+**Request:**
+```json
+{
+  "backup_name": "optional-custom-name"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "backup": {
+    "timestamp": "20240101_120000",
+    "postgres": {
+      "success": true,
+      "path": "./backups/postgres/postgres_backup_20240101_120000.sql"
+    },
+    "milvus": {
+      "success": true,
+      "path": "./backups/milvus/milvus_backup_20240101_120000.db"
+    },
+    "success": true
+  }
+}
+```
+
+**Note**: Old backups are automatically deleted, keeping only the latest.
+
+#### `POST /api/backup/postgres`
+
+Create a backup of PostgreSQL database only.
+
+**Request:**
+```json
+{
+  "backup_name": "optional-custom-name"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "backup_path": "./backups/postgres/postgres_backup_20240101_120000.sql"
+}
+```
+
+#### `POST /api/backup/milvus`
+
+Create a backup of Milvus Lite database only.
+
+**Request:**
+```json
+{
+  "backup_name": "optional-custom-name"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "backup_path": "./backups/milvus/milvus_backup_20240101_120000.db"
+}
+```
+
+#### `POST /api/restore`
+
+Restore both PostgreSQL and Milvus Lite databases from backup.
+
+**Request:**
+```json
+{
+  "backup_timestamp": "20240101_120000",
+  "drop_existing": false
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "restore": {
+    "postgres": {
+      "success": true,
+      "message": "Successfully restored from postgres_backup_20240101_120000.sql"
+    },
+    "milvus": {
+      "success": true,
+      "message": "Successfully restored from milvus_backup_20240101_120000.db"
+    },
+    "success": true
+  }
+}
+```
+
+#### `POST /api/restore/postgres`
+
+Restore PostgreSQL database from backup.
+
+**Request:**
+```json
+{
+  "backup_timestamp": "20240101_120000",
+  "drop_existing": false
+}
+```
+
+#### `POST /api/restore/milvus`
+
+Restore Milvus Lite database from backup.
+
+**Request:**
+```json
+{
+  "backup_timestamp": "20240101_120000",
+  "drop_existing": false
+}
+```
+
+#### `GET /api/backups`
+
+List all available backups.
+
+**Response:**
+```json
+{
+  "backups": {
+    "postgres": [
+      {
+        "name": "postgres_backup_20240101_120000.sql",
+        "path": "./backups/postgres/postgres_backup_20240101_120000.sql",
+        "size": 1024000,
+        "created": "2024-01-01T12:00:00"
+      }
+    ],
+    "milvus": [
+      {
+        "name": "milvus_backup_20240101_120000.db",
+        "path": "./backups/milvus/milvus_backup_20240101_120000.db",
+        "size": 2048000,
+        "created": "2024-01-01T12:00:00"
+      }
+    ]
+  },
+  "latest": {
+    "timestamp": "20240101_120000",
+    "postgres": {...},
+    "milvus": {...}
+  }
+}
+```
 
 ---
 

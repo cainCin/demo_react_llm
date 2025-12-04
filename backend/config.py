@@ -58,9 +58,22 @@ POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 # ============================================
 
 SESSIONS_DIR = os.getenv("SESSIONS_DIR", "./sessions")
+
+# ============================================
+# Database Configuration (PostgreSQL)
+# ============================================
+
 POSTGRES_DB = os.getenv("POSTGRES_DB", "chatbox_rag")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+
+# ============================================
+# Backup Configuration
+# ============================================
+
+BACKUP_DIR = os.getenv("BACKUP_DIR", "./backups")
+BACKUP_ON_SHUTDOWN = os.getenv("BACKUP_ON_SHUTDOWN", "true").lower() == "true"
+RESTORE_ON_START = os.getenv("RESTORE_ON_START", "false").lower() == "true"
 
 # ============================================
 # Feature Flags

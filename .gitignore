@@ -32,6 +32,12 @@ sessions/
 backend/sessions/
 *.session
 
+# Database backups
+backups/
+backend/backups/
+*.sql
+*.db.backup
+
 # OS
 .DS_Store
 Thumbs.db

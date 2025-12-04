@@ -13,6 +13,8 @@ from .models import (
     DocumentListItem
 )
 
+from .backup_manager import BackupManager
+
 __all__ = [
     # ORM Models (for database operations)
     'DatabaseManager',
@@ -26,6 +28,8 @@ __all__ = [
     'SearchResult',
     'VerificationResult',
     'ResyncResult',
-    'DocumentListItem'
+    'DocumentListItem',
+    # Backup Manager
+    'BackupManager'
 ]
 

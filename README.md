@@ -13,6 +13,8 @@ A modern, full-stack chat application with a React frontend and Python FastAPI b
 - 💾 **Session Management**: Save, load, and manage chat conversations with unique session IDs
 - 🔍 **Reference Chunk Selection**: Select/deselect context chunks to improve LLM responses
 - 📄 **Chunk Viewer**: View full chunk content in a dedicated side panel
+- 💾 **Automatic Database Backup**: Automatic backup on app shutdown (keeps only latest backup)
+- 🔄 **Database Restore**: Restore databases from backups on app startup
 - 🔍 Extensible suggestion system with YAML configuration (@ mentions, etc.)
 - 🎨 Multiple themes (Light, Dark, Ocean, Forest, Sunset, Purple)
 - 🔒 No root permissions required for installation
@@ -113,7 +115,13 @@ The application will be available at:
 Edit `backend/.env`:
 
 ```env
+# LLM API Configuration
 OPENAI_API_KEY=your_openai_api_key_here
+
+# Database Backup (optional)
+BACKUP_ON_SHUTDOWN=true  # Automatic backup on app shutdown
+RESTORE_ON_START=false   # Restore from latest backup on startup
+BACKUP_DIR=./backups     # Backup storage directory
 ```
 
 ### API Configuration
@@ -240,6 +248,16 @@ Send a chat message to the LLM.
 
 - `GET /api/chunks/{chunk_id}` - Get chunk content by ID
 
+### Database Backup & Restore
+
+- `POST /api/backup` - Create full backup (both databases)
+- `POST /api/backup/postgres` - Backup PostgreSQL only
+- `POST /api/backup/milvus` - Backup Milvus Lite only
+- `GET /api/backups` - List all available backups
+- `POST /api/restore` - Restore both databases from backup
+- `POST /api/restore/postgres` - Restore PostgreSQL from backup
+- `POST /api/restore/milvus` - Restore Milvus Lite from backup
+
 **For detailed API documentation, see [FEATURES.md](FEATURES.md) or visit http://localhost:8000/docs**
 
 ## 🐛 Troubleshooting
@@ -303,6 +321,31 @@ For detailed documentation on key features:
 - **Reference Chunk Selection**: See [FEATURES.md](FEATURES.md#reference-chunk-selection)
 - **Chunk Viewer**: See [FEATURES.md](FEATURES.md#chunk-viewer)
 - **API Reference**: See [FEATURES.md](FEATURES.md#api-reference)
+
+## 💾 Database Backup & Restore
+
+The app includes automatic database backup and restore functionality:
+
+- **Automatic Backup**: Creates backups of PostgreSQL and Milvus Lite databases on app shutdown
+- **Latest Backup Only**: Automatically deletes old backups, keeping only the most recent one
+- **Manual Backup**: Use API endpoints to create backups at any time
+- **Restore on Startup**: Optionally restore from latest backup when app starts
+
+**Configuration** (in `backend/.env`):
+```env
+BACKUP_ON_SHUTDOWN=true   # Enable automatic backup on shutdown
+RESTORE_ON_START=false    # Restore from backup on startup (use with caution)
+BACKUP_DIR=./backups      # Backup storage location
+```
+
+**Note**: Backups automatically use Docker exec when the PostgreSQL container is available, ensuring version compatibility. No need to install matching pg_dump versions!
+
+**API Endpoints**:
+- `POST /api/backup` - Create full backup
+- `GET /api/backups` - List available backups
+- `POST /api/restore` - Restore from backup
+
+See [FEATURES.md](FEATURES.md#database-backup--restore) for detailed documentation.
 
 ## 📧 Support
 

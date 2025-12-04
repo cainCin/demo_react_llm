@@ -71,7 +71,9 @@ cp env.example .env
 - `pymilvus` - Milvus vector database client
 - `sqlalchemy` - PostgreSQL ORM
 - `psycopg2-binary` - PostgreSQL adapter
-- And more...
+- **Docker** - Required for PostgreSQL backups (backup uses Docker exec automatically)
+  - **Note**: Backups automatically use Docker exec when container is available, ensuring version compatibility
+  - **Fallback**: If Docker is not available, local `pg_dump` is used (requires matching version)
 
 ### Step 2: Frontend Setup
 
@@ -178,6 +180,11 @@ AZURE_OPENAI_DEPLOYMENT_NAME=your-deployment-name
 # RAG System (optional)
 RAG_ENABLED=true
 EMBEDDING_MODEL=text-embedding-ada-002
+
+# Database Backup Configuration (optional)
+BACKUP_ON_SHUTDOWN=true  # Automatic backup on app shutdown (keeps only latest)
+RESTORE_ON_START=false   # Restore from latest backup on startup (use with caution)
+BACKUP_DIR=./backups     # Backup storage directory
 ```
 
 ### 2. Suggestion System Configuration (Optional)
@@ -299,16 +306,50 @@ npm install package-name@latest
 - [ ] Can access http://localhost:3000
 - [ ] Can access http://localhost:8000/docs
 
+## 💾 Database Backup Setup (Optional)
+
+The app includes automatic database backup functionality. To use it:
+
+1. **Ensure Docker is installed and PostgreSQL container is running**:
+   ```bash
+   # Check if Docker is installed
+   docker --version
+   
+   # Check if PostgreSQL container is running
+   docker ps --filter 'name=chatbox-postgres'
+   
+   # If not running, start it
+   docker start chatbox-postgres
+   ```
+
+   **Note**: The backup system automatically uses Docker exec when the container is available, which ensures version compatibility and eliminates version mismatch issues.
+
+2. **Configure backup settings** in `backend/.env`:
+   ```env
+   BACKUP_ON_SHUTDOWN=true   # Enable automatic backup on shutdown
+   RESTORE_ON_START=false    # Restore from backup on startup (optional)
+   BACKUP_DIR=./backups      # Backup storage directory
+   ```
+
+3. **How it works**:
+   - Backups are created automatically when the app shuts down
+   - Only the latest backup is kept (old backups are automatically deleted)
+   - You can manually create backups using API endpoints
+   - Restore from backup on startup if needed
+
+See [FEATURES.md](FEATURES.md#database-backup--restore) for detailed documentation.
+
 ## 🎉 Next Steps
 
 After successful installation:
 
 1. **Configure API keys** in `backend/.env`
-2. **Start the application** using `./start.sh` or manually
-3. **Upload documents** (if using RAG system) via the UI
-4. **Try the suggestion system** by typing `@` in the chatbox
-5. **Switch themes** using the theme switcher in the header
-6. **Explore API docs** at http://localhost:8000/docs
+2. **Install PostgreSQL client tools** (if using backup feature)
+3. **Start the application** using `./start.sh` or manually
+4. **Upload documents** (if using RAG system) via the UI
+5. **Try the suggestion system** by typing `@` in the chatbox
+6. **Switch themes** using the theme switcher in the header
+7. **Explore API docs** at http://localhost:8000/docs
 
 Enjoy your Chatbox App! 🚀
 

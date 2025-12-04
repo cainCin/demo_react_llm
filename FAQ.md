@@ -262,6 +262,69 @@ ValueError: Session <session_id> does not exist. Log file: sessions/logs/<sessio
 
 ---
 
+#### Error: `pg_dump not found` or `pg_restore not found`
+
+**Symptoms:**
+```
+FileNotFoundError: pg_dump not found. Please install PostgreSQL client tools.
+```
+
+**Solution:**
+1. **Linux**: `sudo apt-get install postgresql-client` (or specific version: `postgresql-client-15`)
+2. **macOS**: `brew install postgresql` (or specific version: `brew install postgresql@15`)
+3. **Windows**: Install PostgreSQL (client tools included)
+
+**Prevention:** Install PostgreSQL client tools before using backup features.
+
+---
+
+#### Error: `pg_dump version mismatch` or `server version mismatch`
+
+**Symptoms:**
+```
+pg_dump: error: server version: 15.15; pg_dump version: 12.22
+pg_dump: error: aborting because of server version mismatch
+```
+
+**Solution:**
+
+**The backup system now automatically uses Docker exec when the PostgreSQL container is available**, which ensures version compatibility. If you still see this error:
+
+1. **Verify Docker container is running**:
+   ```bash
+   docker ps --filter 'name=chatbox-postgres'
+   ```
+
+2. **If container is not running, start it**:
+   ```bash
+   docker start chatbox-postgres
+   ```
+
+3. **If you're not using Docker**, you'll need to upgrade pg_dump:
+   - **Linux**: `sudo apt-get install postgresql-client-15` (replace 15 with your server version)
+   - **macOS**: `brew install postgresql@15`
+   - **Windows**: Reinstall PostgreSQL with matching version
+
+**Note**: The backup system automatically detects and uses Docker when available, eliminating version mismatch issues.
+
+---
+
+#### Error: Backup fails on shutdown
+
+**Symptoms:**
+- No backup created when app shuts down
+- Error messages in logs
+
+**Solution:**
+1. Check `BACKUP_ON_SHUTDOWN=true` in `.env`
+2. Verify PostgreSQL client tools are installed
+3. Check file permissions on `backups/` directory
+4. Ensure RAG system is enabled (`RAG_ENABLED=true`)
+
+**Prevention:** Test backup manually using `POST /api/backup` endpoint before relying on automatic backups.
+
+---
+
 #### Error: `NameError: name 'VerificationResult' is not defined`
 
 **Symptoms:**
@@ -476,7 +539,7 @@ docker exec -it chatbox-postgres psql -U chatbox_user -d chatbox_db -c "SELECT C
 ## 📚 Additional Resources
 
 - **Backend API Docs:** http://localhost:8000/docs (Swagger UI)
-- **Feature Documentation:** `FEATURES.md` - Session management, chunk selection, chunk viewer
+- **Feature Documentation:** `FEATURES.md` - Session management, chunk selection, chunk viewer, database backup/restore
 - **Database Documentation:** `backend/database/README.md`
 - **Suggestion System:** `frontend/SUGGESTION_SYSTEM.md`
 - **Theme System:** `frontend/src/themes/README.md`

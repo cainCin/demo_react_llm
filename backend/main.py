@@ -3,6 +3,9 @@ FastAPI backend for chatbox application with LLM integration
 """
 import os
 import uuid
+import signal
+import atexit
+from contextlib import asynccontextmanager
 from typing import List, Optional, Dict
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,13 +17,51 @@ from session_manager import SessionManager
 from config import (
     RAG_ENABLED, LLM_TEMPERATURE, LLM_MAX_TOKENS, MAX_FILE_SIZE,
     EMBEDDING_MODEL, RAG_TOP_K, CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_DIM,
-    LLM_TIMEOUT, SESSIONS_DIR
+    LLM_TIMEOUT, SESSIONS_DIR, BACKUP_DIR, BACKUP_ON_SHUTDOWN, RESTORE_ON_START
 )
 
 # Load environment variables
 load_dotenv()
 
-app = FastAPI(title="Chatbox API", version="1.0.0")
+# Global variables for shutdown backup
+backup_manager_global = None
+rag_system_global = None
+
+def perform_shutdown_backup():
+    """Perform backup on application shutdown"""
+    global backup_manager_global, rag_system_global
+    if backup_manager_global and rag_system_global and BACKUP_ON_SHUTDOWN:
+        try:
+            print("\n💾 Creating backup on shutdown...")
+            backup_result = backup_manager_global.backup_all("shutdown_backup")
+            if backup_result['success']:
+                print("✅ Shutdown backup completed successfully")
+            else:
+                print(f"⚠️  Shutdown backup completed with errors: {backup_result}")
+        except Exception as e:
+            print(f"⚠️  Error during shutdown backup: {e}")
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    perform_shutdown_backup()
+    exit(0)
+
+# Register signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# Register atexit handler as fallback
+atexit.register(perform_shutdown_backup)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown"""
+    # Startup
+    yield
+    # Shutdown
+    perform_shutdown_backup()
+
+app = FastAPI(title="Chatbox API", version="1.0.0", lifespan=lifespan)
 
 # CORS middleware to allow React frontend to connect
 app.add_middleware(
@@ -81,6 +122,37 @@ elif openai_api_key:
 else:
     print("⚠️  No OpenAI API key configured")
 
+# Initialize Backup Manager (for database backups)
+from database import BackupManager
+backup_manager = BackupManager(backup_dir=BACKUP_DIR)
+backup_manager_global = backup_manager  # Store for shutdown handler
+print(f"✅ Backup manager initialized (backup dir: {BACKUP_DIR})")
+if BACKUP_ON_SHUTDOWN:
+    print(f"   Backup on shutdown: enabled (keeps only latest backup)")
+
+# Handle restore on startup if RAG is enabled
+# NOTE: Restore must happen BEFORE RAG system initialization
+if RAG_ENABLED and RESTORE_ON_START:
+    try:
+        latest_backup = backup_manager.get_latest_backup()
+        if latest_backup:
+            print(f"🔄 Restoring from latest backup: {latest_backup['timestamp']}")
+            restore_result = backup_manager.restore_all(
+                latest_backup['timestamp'],
+                drop_existing=True
+            )
+            if restore_result['success']:
+                print("✅ Database restore completed successfully")
+                print("   RAG system will initialize with restored databases")
+            else:
+                print(f"⚠️  Database restore completed with errors: {restore_result}")
+                print("   RAG system will initialize with existing databases")
+        else:
+            print("ℹ️  No backup found to restore from")
+    except Exception as e:
+        print(f"⚠️  Error during restore: {e}")
+        print("   Continuing with existing databases...")
+
 # Initialize RAG system (optional, can be disabled)
 rag_system = None
 
@@ -97,6 +169,7 @@ if RAG_ENABLED and openai_client:
                 embedding_model = azure_embedding_deployment
         
         rag_system = RAGSystem(openai_client, embedding_model=embedding_model, use_azure=use_azure)
+        rag_system_global = rag_system  # Store for shutdown handler
         print("✅ RAG system initialized")
         print(f"   Chunk size: {CHUNK_SIZE}, Overlap: {CHUNK_OVERLAP}")
         print(f"   Embedding model: {embedding_model}, Dimension: {EMBEDDING_DIM}")
@@ -778,6 +851,174 @@ async def delete_session(session_id: str):
         return {"status": "ok", "message": "Session deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting session: {str(e)}")
+
+
+# ============================================
+# Database Backup and Restore Endpoints
+# ============================================
+
+class BackupRequest(BaseModel):
+    backup_name: Optional[str] = None
+
+class RestoreRequest(BaseModel):
+    backup_timestamp: str
+    drop_existing: bool = False
+
+@app.post("/api/backup")
+async def create_backup(request: BackupRequest = BackupRequest()):
+    """Create a backup of both PostgreSQL and Milvus databases"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        result = backup_manager.backup_all(backup_name=request.backup_name)
+        return {
+            "status": "ok" if result["success"] else "partial",
+            "backup": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating backup: {str(e)}")
+
+@app.post("/api/backup/postgres")
+async def create_postgres_backup(request: BackupRequest = BackupRequest()):
+    """Create a backup of PostgreSQL database only"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        success, path_or_error = backup_manager.backup_postgres(backup_name=request.backup_name)
+        if success:
+            return {
+                "status": "ok",
+                "backup_path": path_or_error
+            }
+        else:
+            raise HTTPException(status_code=500, detail=path_or_error)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating PostgreSQL backup: {str(e)}")
+
+@app.post("/api/backup/milvus")
+async def create_milvus_backup(request: BackupRequest = BackupRequest()):
+    """Create a backup of Milvus Lite database only"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        success, path_or_error = backup_manager.backup_milvus(backup_name=request.backup_name)
+        if success:
+            return {
+                "status": "ok",
+                "backup_path": path_or_error
+            }
+        else:
+            raise HTTPException(status_code=500, detail=path_or_error)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating Milvus backup: {str(e)}")
+
+@app.post("/api/restore")
+async def restore_backup(request: RestoreRequest):
+    """Restore both PostgreSQL and Milvus databases from backup"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        result = backup_manager.restore_all(
+            backup_timestamp=request.backup_timestamp,
+            drop_existing=request.drop_existing
+        )
+        return {
+            "status": "ok" if result["success"] else "partial",
+            "restore": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error restoring backup: {str(e)}")
+
+@app.post("/api/restore/postgres")
+async def restore_postgres_backup(request: RestoreRequest):
+    """Restore PostgreSQL database from backup"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        # Find backup file with timestamp
+        backups = backup_manager.list_backups()
+        pg_backup = None
+        for backup in backups["postgres"]:
+            if request.backup_timestamp in backup["name"]:
+                pg_backup = backup["name"]
+                break
+        
+        if not pg_backup:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No PostgreSQL backup found with timestamp: {request.backup_timestamp}"
+            )
+        
+        success, message = backup_manager.restore_postgres(
+            backup_name=pg_backup,
+            drop_existing=request.drop_existing
+        )
+        
+        if success:
+            return {"status": "ok", "message": message}
+        else:
+            raise HTTPException(status_code=500, detail=message)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error restoring PostgreSQL backup: {str(e)}")
+
+@app.post("/api/restore/milvus")
+async def restore_milvus_backup(request: RestoreRequest):
+    """Restore Milvus Lite database from backup"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        # Find backup file with timestamp
+        backups = backup_manager.list_backups()
+        milvus_backup = None
+        for backup in backups["milvus"]:
+            if request.backup_timestamp in backup["name"]:
+                milvus_backup = backup["name"]
+                break
+        
+        if not milvus_backup:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No Milvus backup found with timestamp: {request.backup_timestamp}"
+            )
+        
+        success, message = backup_manager.restore_milvus(backup_name=milvus_backup)
+        
+        if success:
+            return {"status": "ok", "message": message}
+        else:
+            raise HTTPException(status_code=500, detail=message)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error restoring Milvus backup: {str(e)}")
+
+@app.get("/api/backups")
+async def list_backups():
+    """List all available backups"""
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    try:
+        backups = backup_manager.list_backups()
+        latest = backup_manager.get_latest_backup()
+        return {
+            "backups": backups,
+            "latest": latest
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing backups: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
