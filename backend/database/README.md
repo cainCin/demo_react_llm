@@ -8,9 +8,26 @@ This package contains all database-related functionality for the RAG (Retrieval-
 database/
 ├── __init__.py              # Package initialization
 ├── database_manager.py      # Core database management class
+├── models.py                # Data classes for type-safe data handling
 ├── verify_databases.py      # Database verification and CSV export script
-└── README.md               # This file
+├── README.md               # This file
+├── QUICK_START.md          # Quick reference guide
+└── DATA_CLASSES.md         # Data classes documentation
 ```
+
+## 📦 Data Classes
+
+All data structures use Python data classes for type safety and consistency:
+
+- **DocumentData**: Complete document information
+- **ChunkData**: Text chunk with metadata
+- **VectorData**: Vector embedding for Milvus
+- **SearchResult**: Search results with similarity scores
+- **VerificationResult**: Database verification status
+- **ResyncResult**: Resynchronization operation results
+- **DocumentListItem**: Lightweight document for lists
+
+See [DATA_CLASSES.md](DATA_CLASSES.md) for detailed documentation.
 
 ## 🏗️ Architecture
 

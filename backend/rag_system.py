@@ -6,7 +6,10 @@ Database operations are handled by DatabaseManager
 import uuid
 import hashlib
 from typing import List, Optional, Dict
-from database import DatabaseManager, Document, Chunk
+from database import (
+    DatabaseManager, Document, Chunk,
+    DocumentData, ChunkData, VectorData, SearchResult
+)
 from config import (
     CHUNK_SIZE, CHUNK_OVERLAP, CHUNK_MIN_SIZE,
     EMBEDDING_MODEL, EMBEDDING_DIM,
@@ -137,7 +140,7 @@ class RAGSystem:
             
             # Generate embeddings and store in Milvus Lite
             print(f"📊 Generating embeddings for {len(chunks)} chunks...")
-            insert_data = []
+            insert_data: List[VectorData] = []
             total_chunks = len(chunks)
             
             for idx, chunk_text in enumerate(chunks):
@@ -150,13 +153,15 @@ class RAGSystem:
                 # Convert UUID string to int64 for Milvus
                 chunk_id_int = self.db_manager._uuid_to_int64(chunk_id_str)
                 
-                insert_data.append({
-                    "id": chunk_id_int,  # Milvus requires int64
-                    "vector": embedding,  # Only embedding stored in Milvus
-                    "document_id": doc_id,  # Keep document_id for reference
-                    "chunk_index": idx  # Keep chunk_index for reference
+                # Create VectorData object
+                vector_data = VectorData(
+                    id=chunk_id_int,  # Milvus requires int64
+                    vector=embedding,  # Only embedding stored in Milvus
+                    document_id=doc_id,  # Keep document_id for reference
+                    chunk_index=idx  # Keep chunk_index for reference
                     # Note: text is NOT stored in Milvus, only in PostgreSQL
-                })
+                )
+                insert_data.append(vector_data)
             
             print()  # New line after progress
             
@@ -176,10 +181,10 @@ class RAGSystem:
         finally:
             db.close()
     
-    def search_similar(self, query: str, top_k: Optional[int] = None) -> List[Dict]:
+    def search_similar(self, query: str, top_k: Optional[int] = None) -> List[SearchResult]:
         """
         Search for similar chunks using vector similarity
-        Returns list of relevant chunks with metadata
+        Returns list of SearchResult objects with metadata
         Text is retrieved from PostgreSQL, not Milvus
         Uses config values if top_k not provided
         """
@@ -197,7 +202,7 @@ class RAGSystem:
             )
             
             # Format results and retrieve text from PostgreSQL
-            similar_chunks = []
+            similar_chunks: List[SearchResult] = []
             db = self.db_manager.get_session()
             
             try:
@@ -226,14 +231,15 @@ class RAGSystem:
                             
                             # Filter by similarity threshold
                             if score >= RAG_SIMILARITY_THRESHOLD:
-                                similar_chunks.append({
-                                    "id": hit.get("id"),
-                                    "document_id": document_id,
-                                    "chunk_index": chunk_index,
-                                    "text": chunk.text,  # Retrieved from PostgreSQL
-                                    "distance": distance,
-                                    "score": score
-                                })
+                                search_result = SearchResult(
+                                    id=hit.get("id"),
+                                    document_id=document_id,
+                                    chunk_index=chunk_index,
+                                    text=chunk.text,  # Retrieved from PostgreSQL
+                                    distance=distance,
+                                    score=score
+                                )
+                                similar_chunks.append(search_result)
             finally:
                 db.close()
             
@@ -260,23 +266,23 @@ class RAGSystem:
         """Clean all data from both databases"""
         self.db_manager.clean_all()
     
-    def verify_synchronization(self) -> Dict[str, any]:
+    def verify_synchronization(self) -> VerificationResult:
         """Verify that PostgreSQL and Milvus databases are synchronized"""
         return self.db_manager.verify()
     
-    def resync_databases(self) -> Dict[str, any]:
+    def resync_databases(self) -> ResyncResult:
         """
         Resynchronize databases by ensuring all PostgreSQL chunks exist in Milvus
         This will re-insert any missing vectors into Milvus
         """
         db = self.db_manager.get_session()
-        resync_result = {
-            "success": True,
-            "documents_processed": 0,
-            "chunks_processed": 0,
-            "vectors_inserted": 0,
-            "errors": []
-        }
+        resync_result = ResyncResult(
+            success=True,
+            documents_processed=0,
+            chunks_processed=0,
+            vectors_inserted=0,
+            errors=[]
+        )
         
         try:
             print("🔄 Resynchronizing databases...")
@@ -298,12 +304,12 @@ class RAGSystem:
                     if existing_vectors:
                         existing_vector_ids = {v.get("id") if isinstance(v, dict) else getattr(v, "id", None) for v in existing_vectors}
                 except Exception as e:
-                    resync_result["errors"].append(f"Could not query existing Milvus vectors: {e}")
+                    resync_result.errors.append(f"Could not query existing Milvus vectors: {e}")
             
             # Process each document
             for doc in documents:
                 doc_chunks = [c for c in all_chunks if c.document_id == doc.id]
-                chunks_to_insert = []
+                chunks_to_insert: List[VectorData] = []
                 
                 for chunk in doc_chunks:
                     chunk_id_int = self.db_manager._uuid_to_int64(chunk.id)
@@ -312,32 +318,33 @@ class RAGSystem:
                     if chunk_id_int not in existing_vector_ids:
                         # Generate embedding and prepare for insertion
                         embedding = self.generate_embedding(chunk.text)
-                        chunks_to_insert.append({
-                            "id": chunk_id_int,
-                            "vector": embedding,  # Only embedding stored in Milvus
-                            "document_id": doc.id,
-                            "chunk_index": chunk.chunk_index
+                        vector_data = VectorData(
+                            id=chunk_id_int,
+                            vector=embedding,  # Only embedding stored in Milvus
+                            document_id=doc.id,
+                            chunk_index=chunk.chunk_index
                             # Note: text is NOT stored in Milvus, only in PostgreSQL
-                        })
+                        )
+                        chunks_to_insert.append(vector_data)
                 
                 # Insert missing vectors
                 if chunks_to_insert:
                     try:
                         self.db_manager.insert_vectors(chunks_to_insert)
-                        resync_result["vectors_inserted"] += len(chunks_to_insert)
+                        resync_result.vectors_inserted += len(chunks_to_insert)
                         print(f"   Inserted {len(chunks_to_insert)} missing vectors for document: {doc.filename}")
                     except Exception as e:
-                        resync_result["errors"].append(f"Error inserting vectors for document {doc.id}: {e}")
-                        resync_result["success"] = False
+                        resync_result.errors.append(f"Error inserting vectors for document {doc.id}: {e}")
+                        resync_result.success = False
                 
-                resync_result["chunks_processed"] += len(doc_chunks)
-                resync_result["documents_processed"] += 1
+                resync_result.chunks_processed += len(doc_chunks)
+                resync_result.documents_processed += 1
             
-            print(f"✅ Resynchronization complete: {resync_result['vectors_inserted']} vectors inserted")
+            print(f"✅ Resynchronization complete: {resync_result.vectors_inserted} vectors inserted")
             
         except Exception as e:
-            resync_result["success"] = False
-            resync_result["errors"].append(f"Error during resynchronization: {e}")
+            resync_result.success = False
+            resync_result.errors.append(f"Error during resynchronization: {e}")
             print(f"❌ Resynchronization failed: {e}")
         finally:
             db.close()

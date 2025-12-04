@@ -228,7 +228,7 @@ async def list_documents():
     if not rag_system:
         raise HTTPException(status_code=400, detail="RAG system is not enabled")
     
-    from database import Document
+    from database import Document, DocumentListItem
     from sqlalchemy.orm import Session
     
     db: Session = rag_system.db_manager.get_session()
@@ -236,12 +236,7 @@ async def list_documents():
         documents = db.query(Document).order_by(Document.created_at.desc()).all()
         return {
             "documents": [
-                {
-                    "id": doc.id,
-                    "filename": doc.filename,
-                    "chunk_count": doc.chunk_count,
-                    "created_at": doc.created_at.isoformat()
-                }
+                DocumentListItem.from_orm(doc).to_dict()
                 for doc in documents
             ]
         }
@@ -284,8 +279,8 @@ async def check_synchronization():
     try:
         # Use DatabaseManager's verify method
         sync_status = rag_system.db_manager.verify()
-        status_code = 200 if sync_status["synchronized"] else 207  # 207 Multi-Status
-        return sync_status
+        status_code = 200 if sync_status.synchronized else 207  # 207 Multi-Status
+        return sync_status.to_dict()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error checking synchronization: {str(e)}")
 
@@ -298,8 +293,8 @@ async def resync_databases():
     
     try:
         resync_result = rag_system.resync_databases()
-        status_code = 200 if resync_result["success"] else 207
-        return resync_result
+        status_code = 200 if resync_result.success else 207
+        return resync_result.to_dict()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error resynchronizing databases: {str(e)}")
 
@@ -341,7 +336,7 @@ async def chat(request: ChatRequest):
                     # Build context from retrieved chunks
                     context_parts = ["[Relevant context from documents:]"]
                     for chunk in similar_chunks:
-                        context_parts.append(f"\n---\n{chunk['text']}")
+                        context_parts.append(f"\n---\n{chunk.text}")
                     rag_context = "\n".join(context_parts)
                     print(f"✅ Retrieved {len(similar_chunks)} relevant chunks from RAG")
             except Exception as e:

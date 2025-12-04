@@ -23,6 +23,10 @@ frontend/.vite/
 *.swo
 *~
 
+#DEBUG
+.csv
+.db
+
 # OS
 .DS_Store
 Thumbs.db

@@ -21,6 +21,7 @@ from config import (
     MILVUS_LITE_PATH, MILVUS_COLLECTION
 )
 from database.database_manager import Document, Chunk, DatabaseManager
+from database import VerificationResult, DocumentListItem
 
 # Load environment variables
 load_dotenv()
@@ -435,21 +436,21 @@ def main():
         verification_result = db_manager.verify()
         
         print(f"\n📊 Verification Results:")
-        print(f"   PostgreSQL: {'✅ Connected' if verification_result['postgres_connected'] else '❌ Failed'}")
-        print(f"   Milvus: {'✅ Connected' if verification_result['milvus_connected'] else '❌ Failed'}")
-        print(f"   Synchronized: {'✅ Yes' if verification_result['synchronized'] else '❌ No'}")
+        print(f"   PostgreSQL: {'✅ Connected' if verification_result.postgres_connected else '❌ Failed'}")
+        print(f"   Milvus: {'✅ Connected' if verification_result.milvus_connected else '❌ Failed'}")
+        print(f"   Synchronized: {'✅ Yes' if verification_result.synchronized else '❌ No'}")
         print(f"\n📈 Counts:")
-        print(f"   PostgreSQL documents: {verification_result['postgres_documents']}")
-        print(f"   PostgreSQL chunks: {verification_result['postgres_chunks']}")
-        print(f"   Milvus vectors: {verification_result['milvus_vectors']}")
+        print(f"   PostgreSQL documents: {verification_result.postgres_documents}")
+        print(f"   PostgreSQL chunks: {verification_result.postgres_chunks}")
+        print(f"   Milvus vectors: {verification_result.milvus_vectors}")
         
-        if verification_result['issues']:
+        if verification_result.issues:
             print(f"\n⚠️  Issues found:")
-            for issue in verification_result['issues']:
+            for issue in verification_result.issues:
                 print(f"   - {issue}")
         
-        postgres_ok = verification_result['postgres_connected']
-        milvus_ok = verification_result['milvus_connected']
+        postgres_ok = verification_result.postgres_connected
+        milvus_ok = verification_result.milvus_connected
         
         # Export to CSV if requested
         if not args.no_export and db_manager:

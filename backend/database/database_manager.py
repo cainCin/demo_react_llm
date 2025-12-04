@@ -154,21 +154,23 @@ class DatabaseManager:
             raise RuntimeError("PostgreSQL not initialized. Call initialize() first.")
         return self.SessionLocal()
     
-    def verify(self) -> Dict[str, any]:
+    def verify(self) -> 'VerificationResult':
         """
         General verification method - checks both databases and synchronization
-        Returns comprehensive verification status
+        Returns comprehensive verification status as VerificationResult data class
         """
-        verification_result = {
-            "postgres_connected": False,
-            "milvus_connected": False,
-            "synchronized": True,
-            "postgres_documents": 0,
-            "postgres_chunks": 0,
-            "milvus_vectors": 0,
-            "issues": [],
-            "details": {}
-        }
+        from database import VerificationResult, DocumentListItem
+        
+        verification_result = VerificationResult(
+            postgres_connected=False,
+            milvus_connected=False,
+            synchronized=True,
+            postgres_documents=0,
+            postgres_chunks=0,
+            milvus_vectors=0,
+            issues=[],
+            details={}
+        )
         
         # Verify PostgreSQL
         if self._postgres_initialized and self.engine:
@@ -178,36 +180,31 @@ class DatabaseManager:
                     postgres_docs = db.query(Document).all()
                     postgres_chunks = db.query(Chunk).all()
                     
-                    verification_result["postgres_connected"] = True
-                    verification_result["postgres_documents"] = len(postgres_docs)
-                    verification_result["postgres_chunks"] = len(postgres_chunks)
+                    verification_result.postgres_connected = True
+                    verification_result.postgres_documents = len(postgres_docs)
+                    verification_result.postgres_chunks = len(postgres_chunks)
                     
-                    verification_result["details"]["postgres"] = {
+                    verification_result.details["postgres"] = {
                         "documents": [
-                            {
-                                "id": doc.id,
-                                "filename": doc.filename,
-                                "chunk_count": doc.chunk_count,
-                                "created_at": doc.created_at.isoformat()
-                            }
+                            DocumentListItem.from_orm(doc).to_dict()
                             for doc in postgres_docs
                         ]
                     }
                 finally:
                     db.close()
             except Exception as e:
-                verification_result["issues"].append(f"PostgreSQL verification error: {e}")
+                verification_result.issues.append(f"PostgreSQL verification error: {e}")
         
         # Verify Milvus
         if self._milvus_initialized and self.milvus_client:
             try:
                 if self.milvus_client.has_collection(self.collection_name):
-                    verification_result["milvus_connected"] = True
+                    verification_result.milvus_connected = True
                     
                     # Get collection info
                     try:
                         collection_info = self.milvus_client.describe_collection(self.collection_name)
-                        verification_result["details"]["milvus"] = {
+                        verification_result.details["milvus"] = {
                             "collection_name": collection_info.get('collection_name', 'N/A'),
                             "description": collection_info.get('description', 'N/A')
                         }
@@ -222,21 +219,21 @@ class DatabaseManager:
                             limit=10000,
                             output_fields=["id", "document_id", "chunk_index"]
                         )
-                        verification_result["milvus_vectors"] = len(all_data) if all_data else 0
+                        verification_result.milvus_vectors = len(all_data) if all_data else 0
                     except Exception as e:
-                        verification_result["issues"].append(f"Could not query Milvus vectors: {e}")
+                        verification_result.issues.append(f"Could not query Milvus vectors: {e}")
                 else:
-                    verification_result["issues"].append("Milvus collection does not exist")
+                    verification_result.issues.append("Milvus collection does not exist")
             except Exception as e:
-                verification_result["issues"].append(f"Milvus verification error: {e}")
+                verification_result.issues.append(f"Milvus verification error: {e}")
         
         # Check synchronization
-        if verification_result["postgres_chunks"] != verification_result["milvus_vectors"]:
-            verification_result["synchronized"] = False
-            diff = verification_result["postgres_chunks"] - verification_result["milvus_vectors"]
-            verification_result["issues"].append(
-                f"Count mismatch: PostgreSQL has {verification_result['postgres_chunks']} chunks, "
-                f"Milvus has {verification_result['milvus_vectors']} vectors (difference: {diff})"
+        if verification_result.postgres_chunks != verification_result.milvus_vectors:
+            verification_result.synchronized = False
+            diff = verification_result.postgres_chunks - verification_result.milvus_vectors
+            verification_result.issues.append(
+                f"Count mismatch: PostgreSQL has {verification_result.postgres_chunks} chunks, "
+                f"Milvus has {verification_result.milvus_vectors} vectors (difference: {diff})"
             )
         
         return verification_result
@@ -329,26 +326,18 @@ class DatabaseManager:
         finally:
             db.close()
     
-    def insert_vectors(self, vectors_data: List[Dict]):
+    def insert_vectors(self, vectors_data: List['VectorData']):
         """
         Insert vectors into Milvus
-        vectors_data should be a list of dicts with: id (int64), vector, document_id, chunk_index
+        Accepts list of VectorData objects
         Note: text is NOT stored in Milvus, only embeddings. Text is stored in PostgreSQL only.
         """
         if not self._milvus_initialized:
             raise RuntimeError("Milvus not initialized")
         
         if vectors_data:
-            # Ensure no text field is included (only embeddings)
-            clean_data = []
-            for item in vectors_data:
-                clean_item = {
-                    "id": item.get("id"),
-                    "vector": item.get("vector"),
-                    "document_id": item.get("document_id"),
-                    "chunk_index": item.get("chunk_index")
-                }
-                clean_data.append(clean_item)
+            # Convert VectorData objects to dicts for Milvus
+            clean_data = [vec.to_dict() for vec in vectors_data]
             
             self.milvus_client.insert(
                 collection_name=self.collection_name,
