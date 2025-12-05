@@ -14,7 +14,8 @@ This is a full-stack chat application with React frontend, FastAPI backend, Post
 
 ### Code Organization
 - Database code goes in `backend/database/` package only.
-- RAG logic goes in `backend/rag_system.py` and MUST delegate to DatabaseManager.
+- Extractors (TOC, chunking) go in `backend/extractors/` package only.
+- RAG logic goes in `backend/rag_system.py` and MUST delegate to DatabaseManager and Extractors.
 - API endpoints go in `backend/main.py` using FastAPI.
 - Frontend components go in `frontend/src/components/`.
 - Frontend config files (YAML) go in `frontend/public/config/` for runtime loading.
@@ -129,6 +130,7 @@ export default Component
 ## File Locations
 
 - Database code: `backend/database/`
+- Extractors (TOC, chunking): `backend/extractors/`
 - RAG system: `backend/rag_system.py`
 - API endpoints: `backend/main.py`
 - Configuration: `backend/config.py`

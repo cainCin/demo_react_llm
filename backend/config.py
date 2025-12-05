@@ -15,6 +15,7 @@ load_dotenv()
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "500"))  # Characters per chunk
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "50"))  # Overlap between chunks
 CHUNK_MIN_SIZE = int(os.getenv("RAG_CHUNK_MIN_SIZE", "100"))  # Minimum chunk size
+EMBEDDING_MAX_LENGTH = int(os.getenv("EMBEDDING_MAX_LENGTH", "8000"))  # Max characters for embedding model
 
 # Embedding Configuration
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002")
@@ -74,6 +75,13 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 BACKUP_DIR = os.getenv("BACKUP_DIR", "./backups")
 BACKUP_ON_SHUTDOWN = os.getenv("BACKUP_ON_SHUTDOWN", "true").lower() == "true"
 RESTORE_ON_START = os.getenv("RESTORE_ON_START", "false").lower() == "true"
+
+# ============================================
+# Server Configuration
+# ============================================
+
+SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
+SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 
 # ============================================
 # Feature Flags

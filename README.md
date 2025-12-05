@@ -13,6 +13,10 @@ A modern, full-stack chat application with a React frontend and Python FastAPI b
 - 💾 **Session Management**: Save, load, and manage chat conversations with unique session IDs
 - 🔍 **Reference Chunk Selection**: Select/deselect context chunks to improve LLM responses
 - 📄 **Chunk Viewer**: View full chunk content in a dedicated side panel
+- 📑 **Table of Contents (TOC) Viewer**: Navigate document structure with hierarchical TOC display
+- 🔄 **Re-send with Selected Chunks**: Re-send queries with custom chunk selection from TOC
+- 💾 **Chunk ID Caching**: Automatic caching of all chunk IDs for fast synchronization
+- 📂 **Auto-Expanding TOC**: Automatically expands TOC sections containing selected chunks
 - 💾 **Automatic Database Backup**: Automatic backup on app shutdown (keeps only latest backup)
 - 🔄 **Database Restore**: Restore databases from backups on app startup
 - 🔍 Extensible suggestion system with YAML configuration (@ mentions, etc.)
@@ -157,7 +161,8 @@ chatbox-app/
 │   │   ├── components/      # React components
 │   │   │   ├── SessionPanel.jsx    # Session management panel
 │   │   │   ├── ContextChunks.jsx   # Chunk selection component
-│   │   │   └── ChunkViewer.jsx     # Chunk viewer component
+│   │   │   ├── ChunkViewer.jsx     # Chunk viewer component
+│   │   │   └── TableOfContents.jsx # TOC viewer component
 │   │   ├── contexts/        # React contexts (Theme, etc.)
 │   │   ├── services/        # API services
 │   │   ├── themes/          # Theme configurations
@@ -247,6 +252,9 @@ Send a chat message to the LLM.
 ### Chunk Management
 
 - `GET /api/chunks/{chunk_id}` - Get chunk content by ID
+- `GET /api/documents/{document_id}/chunks` - Get chunks by document ID and index range
+- `GET /api/documents/{document_id}/toc` - Get table of contents for a document
+- `POST /api/documents/batch` - Get metadata for multiple documents
 
 ### Database Backup & Restore
 
@@ -320,6 +328,7 @@ For detailed documentation on key features:
 - **Session Management**: See [FEATURES.md](FEATURES.md#session-management)
 - **Reference Chunk Selection**: See [FEATURES.md](FEATURES.md#reference-chunk-selection)
 - **Chunk Viewer**: See [FEATURES.md](FEATURES.md#chunk-viewer)
+- **Table of Contents Viewer**: See [FEATURES.md](FEATURES.md#table-of-contents-viewer)
 - **API Reference**: See [FEATURES.md](FEATURES.md#api-reference)
 
 ## 💾 Database Backup & Restore

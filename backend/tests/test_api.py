@@ -276,3 +276,175 @@ class TestCORS:
         # CORS preflight should be handled
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_405_METHOD_NOT_ALLOWED]
 
+
+@pytest.mark.api
+class TestTOCEndpoints:
+    """Tests for Table of Contents endpoints"""
+    
+    def test_get_toc(self, client_with_rag, sample_text):
+        """Test getting TOC for a document"""
+        # Store a document first
+        doc_id = client_with_rag.app.state.rag_system.store_document("test.txt", sample_text)
+        
+        response = client_with_rag.get(f"/api/documents/{doc_id}/toc")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "status" in data
+        assert "data" in data
+        assert "toc" in data["data"] or "filename" in data["data"]
+    
+    def test_get_toc_nonexistent(self, client):
+        """Test getting TOC for non-existent document"""
+        response = client.get("/api/documents/non-existent-id/toc")
+        assert response.status_code in [status.HTTP_404_NOT_FOUND, status.HTTP_400_BAD_REQUEST]
+    
+    def test_get_toc_rag_disabled(self, client):
+        """Test getting TOC when RAG is disabled"""
+        with patch('main.rag_system', None):
+            response = client.get("/api/documents/test-id/toc")
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.api
+class TestChunkEndpoints:
+    """Tests for chunk-related endpoints"""
+    
+    def test_get_chunk_by_id(self, client_with_rag, sample_text):
+        """Test getting chunk by ID"""
+        # Store a document first
+        doc_id = client_with_rag.app.state.rag_system.store_document("test.txt", sample_text)
+        
+        # Get chunks for the document
+        response = client_with_rag.get(f"/api/documents/{doc_id}/chunks")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "chunks" in data
+        if data["chunks"]:
+            chunk_id = data["chunks"][0]["id"]
+            
+            # Get chunk by ID
+            response = client_with_rag.get(f"/api/chunks/{chunk_id}")
+            assert response.status_code == status.HTTP_200_OK
+            chunk_data = response.json()
+            assert "id" in chunk_data
+            assert "text" in chunk_data
+            assert "document_id" in chunk_data
+    
+    def test_get_chunks_by_range(self, client_with_rag, sample_text):
+        """Test getting chunks by index range"""
+        # Store a document first
+        doc_id = client_with_rag.app.state.rag_system.store_document("test.txt", sample_text)
+        
+        response = client_with_rag.get(
+            f"/api/documents/{doc_id}/chunks",
+            params={"start": 0, "end": 2}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "chunks" in data
+        # All returned chunks should be in the range
+        for chunk in data["chunks"]:
+            assert 0 <= chunk["chunk_index"] <= 2
+    
+    def test_get_chunk_nonexistent(self, client):
+        """Test getting non-existent chunk"""
+        response = client.get("/api/chunks/non-existent-id")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+    
+    def test_get_chunks_rag_disabled(self, client):
+        """Test getting chunks when RAG is disabled"""
+        with patch('main.rag_system', None):
+            response = client.get("/api/documents/test-id/chunks")
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.api
+class TestBatchDocumentEndpoint:
+    """Tests for batch document retrieval endpoint"""
+    
+    def test_get_documents_batch(self, client_with_rag, sample_text):
+        """Test getting multiple documents by IDs"""
+        # Store documents
+        doc_id1 = client_with_rag.app.state.rag_system.store_document("test1.txt", sample_text)
+        doc_id2 = client_with_rag.app.state.rag_system.store_document("test2.txt", sample_text)
+        
+        response = client_with_rag.post(
+            "/api/documents/batch",
+            json={"document_ids": [doc_id1, doc_id2]}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "status" in data
+        assert "documents" in data
+        assert len(data["documents"]) == 2
+    
+    def test_get_documents_batch_empty(self, client):
+        """Test getting documents with empty list"""
+        response = client.post(
+            "/api/documents/batch",
+            json={"document_ids": []}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "documents" in data
+        assert len(data["documents"]) == 0
+    
+    def test_get_documents_batch_rag_disabled(self, client):
+        """Test batch endpoint when RAG is disabled"""
+        with patch('main.rag_system', None):
+            response = client.post(
+                "/api/documents/batch",
+                json={"document_ids": ["test-id"]}
+            )
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.api
+class TestChatWithSelectedChunks:
+    """Tests for chat endpoint with selected chunks"""
+    
+    def test_chat_with_selected_chunks(self, client_with_rag, sample_text):
+        """Test chat endpoint with selected chunks"""
+        # Store a document first
+        doc_id = client_with_rag.app.state.rag_system.store_document("test.txt", sample_text)
+        
+        # First, get chunks from a search
+        response = client_with_rag.post(
+            "/api/chat",
+            json={
+                "messages": [{"role": "user", "content": "What is in the document?"}]
+            }
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        
+        # If chunks were returned, test re-sending with selected chunks
+        if "chunks" in data and data["chunks"]:
+            chunk_ids = [str(chunk["id"]) for chunk in data["chunks"][:2]]  # Select first 2
+            
+            # Re-send with selected chunks
+            response = client_with_rag.post(
+                "/api/chat",
+                json={
+                    "messages": [{"role": "user", "content": "What is in the document?"}],
+                    "selected_chunks": chunk_ids
+                }
+            )
+            assert response.status_code == status.HTTP_200_OK
+            new_data = response.json()
+            assert "message" in new_data
+            # Should have chunks (may be filtered to selected ones)
+            assert "chunks" in new_data
+    
+    def test_chat_with_invalid_chunk_ids(self, client_with_rag):
+        """Test chat with invalid chunk IDs"""
+        response = client_with_rag.post(
+            "/api/chat",
+            json={
+                "messages": [{"role": "user", "content": "Hello"}],
+                "selected_chunks": ["invalid-chunk-id-1", "invalid-chunk-id-2"]
+            }
+        )
+        # Should still work, but may not find chunks
+        assert response.status_code == status.HTTP_200_OK
+

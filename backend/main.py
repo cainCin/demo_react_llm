@@ -340,6 +340,116 @@ async def list_documents():
         db.close()
 
 
+@app.get("/api/documents/{document_id}/toc")
+async def get_document_toc(document_id: str):
+    """
+    Get table of contents for a document
+    Returns hierarchical TOC structure with chunk mappings
+    """
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    from database import Document
+    
+    db = rag_system.db_manager.get_session()
+    try:
+        document = db.query(Document).filter(Document.id == document_id).first()
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        return {
+            "status": "ok",
+            "data": {
+                "document_id": document_id,
+                "filename": document.filename,
+                "toc": document.toc or []
+            }
+        }
+    finally:
+        db.close()
+
+
+class DocumentBatchRequest(BaseModel):
+    """Request model for batch document retrieval"""
+    document_ids: List[str]
+
+
+@app.post("/api/documents/batch")
+async def get_documents_batch(request: DocumentBatchRequest):
+    """
+    Get multiple documents by IDs
+    Returns document metadata including filenames
+    
+    Request body: {"document_ids": ["id1", "id2", ...]}
+    """
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    from database import Document
+    
+    db = rag_system.db_manager.get_session()
+    try:
+        documents = db.query(Document).filter(Document.id.in_(request.document_ids)).all()
+        
+        return {
+            "status": "ok",
+            "documents": [
+                {
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "chunk_count": doc.chunk_count,
+                    "created_at": doc.created_at.isoformat() if doc.created_at else None
+                }
+                for doc in documents
+            ]
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/documents/{document_id}/chunks")
+async def get_document_chunks(
+    document_id: str,
+    start: Optional[int] = None,
+    end: Optional[int] = None
+):
+    """
+    Get chunks for a document by chunk index range
+    Used by TOC to load chunks for a specific section
+    """
+    if not rag_system:
+        raise HTTPException(status_code=400, detail="RAG system is not enabled")
+    
+    from database import Chunk
+    
+    db = rag_system.db_manager.get_session()
+    try:
+        query = db.query(Chunk).filter(Chunk.document_id == document_id)
+        
+        if start is not None:
+            query = query.filter(Chunk.chunk_index >= start)
+        if end is not None:
+            query = query.filter(Chunk.chunk_index <= end)
+        
+        query = query.order_by(Chunk.chunk_index)
+        chunks = query.all()
+        
+        return {
+            "status": "ok",
+            "chunks": [
+                {
+                    "id": chunk.id,
+                    "text": chunk.text,
+                    "document_id": chunk.document_id,
+                    "chunk_index": chunk.chunk_index
+                }
+                for chunk in chunks
+            ]
+        }
+    finally:
+        db.close()
+
+
 @app.get("/api/chunks/{chunk_id}")
 async def get_chunk(chunk_id: str):
     """
@@ -502,37 +612,189 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         selected_chunk_ids = None
         
         # Check if request includes selected chunks (for re-sending)
+        selected_chunk_ids = None
         if hasattr(request, 'selected_chunks') and request.selected_chunks:
             selected_chunk_ids = set(request.selected_chunks)
+            print(f"📥 Received {len(selected_chunk_ids)} selected chunk IDs from frontend")
+            print(f"   Sample IDs: {list(selected_chunk_ids)[:5]}")
         
         if rag_system and last_user_message:
             try:
-                # Search for similar chunks
-                query_text = last_user_message.content
-                if last_user_message.attachments:
-                    # Include attachment content in query
-                    for attachment in last_user_message.attachments:
-                        query_text += " " + attachment.get('content', '')[:500]  # Limit query size
-                
-                similar_chunks = rag_system.search_similar(query_text, top_k=RAG_TOP_K)
-                
-                if similar_chunks:
-                    # Filter chunks if specific ones are selected
-                    if selected_chunk_ids:
-                        # Convert selected_chunk_ids to both string and int for comparison
-                        selected_ids_set = set()
+                # If specific chunks are selected, fetch them directly instead of searching
+                if selected_chunk_ids and len(selected_chunk_ids) > 0:
+                    # Fetch selected chunks directly from database
+                    from database import Chunk
+                    db = rag_system.db_manager.get_session()
+                    try:
+                        # First, try to query by chunk IDs directly
+                        selected_ids_list = []
+                        selected_ids_set = set()  # For tracking what we've added
                         for sid in selected_chunk_ids:
-                            selected_ids_set.add(str(sid))
+                            sid_str = str(sid)
+                            if sid_str not in selected_ids_set:
+                                selected_ids_list.append(sid_str)
+                                selected_ids_set.add(sid_str)
                             try:
-                                selected_ids_set.add(int(sid))
+                                sid_int = int(sid)
+                                sid_int_str = str(sid_int)
+                                if sid_int_str not in selected_ids_set:
+                                    selected_ids_list.append(sid_int)
+                                    selected_ids_set.add(sid_int_str)
                             except (ValueError, TypeError):
                                 pass
                         
-                        similar_chunks = [chunk for chunk in similar_chunks 
-                                        if chunk.id in selected_ids_set or 
-                                           str(chunk.id) in selected_ids_set]
+                        # Query chunks by IDs
+                        print(f"🔍 Querying database for {len(selected_ids_list)} chunk IDs (from {len(selected_chunk_ids)} selected)")
+                        print(f"   Sample IDs: {selected_ids_list[:5]}")
+                        print(f"   All IDs to query: {selected_ids_list}")
+                        
+                        # Try querying with the list
+                        try:
+                            chunk_records = db.query(Chunk).filter(
+                                Chunk.id.in_(selected_ids_list)
+                            ).all()
+                            print(f"✅ Found {len(chunk_records)} chunks by ID query")
+                            
+                            # If no results, try querying each ID individually to see what's wrong
+                            if len(chunk_records) == 0 and len(selected_ids_list) > 0:
+                                print(f"⚠️  No chunks found with IN query, trying individual queries...")
+                                for test_id in selected_ids_list[:3]:  # Test first 3
+                                    test_chunk = db.query(Chunk).filter(Chunk.id == test_id).first()
+                                    if test_chunk:
+                                        print(f"   ✅ Found chunk with individual query: {test_chunk.id}")
+                                    else:
+                                        print(f"   ❌ Not found: {test_id}")
+                                
+                                # Check what chunk IDs actually exist in the database
+                                sample_chunks = db.query(Chunk).limit(5).all()
+                                if sample_chunks:
+                                    print(f"   Sample chunk IDs in database: {[str(c.id) for c in sample_chunks]}")
+                                    print(f"   Sample chunk document_ids: {[c.document_id for c in sample_chunks]}")
+                                    print(f"   Sample chunk indices: {[c.chunk_index for c in sample_chunks]}")
+                        except Exception as e:
+                            print(f"❌ Error querying chunks: {e}")
+                            chunk_records = []
+                        
+                        # Track found IDs
+                        found_ids_str = {str(c.id) for c in chunk_records}
+                        found_ids_int = set()
+                        for c in chunk_records:
+                            try:
+                                found_ids_int.add(int(c.id))
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        # Check which requested IDs are missing
+                        missing_ids = []
+                        for sid in selected_chunk_ids:
+                            sid_str = str(sid)
+                            if sid_str not in found_ids_str:
+                                try:
+                                    sid_int = int(sid)
+                                    if sid_int not in found_ids_int:
+                                        missing_ids.append(sid)
+                                except (ValueError, TypeError):
+                                    missing_ids.append(sid)
+                        
+                        # Try to find remaining chunks individually (in case of format mismatch)
+                        if missing_ids:
+                            print(f"⚠️  {len(missing_ids)} chunks not found by ID, trying individual queries...")
+                            for missing_id in missing_ids:
+                                # Try as string
+                                chunk = db.query(Chunk).filter(Chunk.id == str(missing_id)).first()
+                                if not chunk:
+                                    # Try as int
+                                    try:
+                                        chunk = db.query(Chunk).filter(Chunk.id == int(missing_id)).first()
+                                    except (ValueError, TypeError):
+                                        pass
+                                
+                                if chunk and chunk.id not in [c.id for c in chunk_records]:
+                                    chunk_records.append(chunk)
+                                    found_ids_str.add(str(chunk.id))
+                                    print(f"   ✅ Found chunk by individual query: {chunk.id}")
+                                else:
+                                    print(f"   ❌ Still not found by ID: {missing_id}")
+                        
+                        # If still missing chunks, they might be in TOC format "docId-chunk-index"
+                        # Try to parse and query by document_id + chunk_index
+                        if missing_ids:
+                            print(f"🔄 Trying to find {len(missing_ids)} chunks by document_id + chunk_index...")
+                            chunks_by_doc_index = {}  # docId -> [chunk_indices]
+                            
+                            for missing_id in missing_ids:
+                                missing_id_str = str(missing_id)
+                                print(f"   Checking missing ID: {missing_id_str}")
+                                # Check if it's in TOC format: "docId-chunk-index"
+                                if '-chunk-' in missing_id_str:
+                                    parts = missing_id_str.split('-chunk-')
+                                    if len(parts) == 2:
+                                        doc_id = parts[0]
+                                        try:
+                                            chunk_idx = int(parts[1])
+                                            if doc_id not in chunks_by_doc_index:
+                                                chunks_by_doc_index[doc_id] = []
+                                            chunks_by_doc_index[doc_id].append(chunk_idx)
+                                            print(f"   Parsed TOC format: doc={doc_id}, index={chunk_idx}")
+                                        except (ValueError, TypeError) as e:
+                                            print(f"   Failed to parse chunk index: {e}")
+                            
+                            # Query chunks by document_id + chunk_index
+                            for doc_id, chunk_indices in chunks_by_doc_index.items():
+                                print(f"   Querying chunks for doc {doc_id} with indices {chunk_indices}")
+                                chunks = db.query(Chunk).filter(
+                                    Chunk.document_id == doc_id,
+                                    Chunk.chunk_index.in_(chunk_indices)
+                                ).all()
+                                
+                                print(f"   Found {len(chunks)} chunks by doc+index")
+                                for chunk in chunks:
+                                    if chunk.id not in [c.id for c in chunk_records]:
+                                        chunk_records.append(chunk)
+                                        found_ids_str.add(str(chunk.id))
+                                        print(f"   ✅ Found chunk by doc+index: {chunk.id} (doc: {doc_id}, index: {chunk.chunk_index})")
+                                
+                                # If still not found, try individual queries
+                                for chunk_idx in chunk_indices:
+                                    found = any(c.chunk_index == chunk_idx and c.document_id == doc_id for c in chunk_records)
+                                    if not found:
+                                        print(f"   ⚠️  Chunk not found: doc={doc_id}, index={chunk_idx}")
+                                        # Try to see what chunks exist for this document
+                                        all_doc_chunks = db.query(Chunk).filter(
+                                            Chunk.document_id == doc_id
+                                        ).all()
+                                        print(f"   Available chunks for doc {doc_id}: {[(c.id, c.chunk_index) for c in all_doc_chunks[:10]]}")
+                        
+                        # Convert to SearchResult format
+                        similar_chunks = []
+                        for chunk_record in chunk_records:
+                            # Get vector data for score calculation if available
+                            # For now, set default score/distance since we're fetching directly
+                            from database import SearchResult
+                            similar_chunks.append(SearchResult(
+                                id=chunk_record.id,
+                                document_id=chunk_record.document_id,
+                                chunk_index=chunk_record.chunk_index,
+                                text=chunk_record.text,
+                                distance=0.0,  # No distance since not from search
+                                score=1.0  # Default score for directly selected chunks
+                            ))
+                        
+                        print(f"✅ Fetched {len(similar_chunks)} selected chunks directly from database (requested: {len(selected_chunk_ids)})")
+                    finally:
+                        db.close()
+                else:
+                    # Normal search: Search for similar chunks
+                    query_text = last_user_message.content
+                    if last_user_message.attachments:
+                        # Include attachment content in query
+                        for attachment in last_user_message.attachments:
+                            query_text += " " + attachment.get('content', '')[:500]  # Limit query size
                     
-                    # Store chunk info for response
+                    similar_chunks = rag_system.search_similar(query_text, top_k=RAG_TOP_K)
+                
+                # Store chunk info for response (for both selected chunks and search results)
+                if similar_chunks:
                     retrieved_chunks = [
                         ChunkInfo(
                             id=str(chunk.id),  # Convert to string for frontend
@@ -545,12 +807,14 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
                         for chunk in similar_chunks
                     ]
                     
-                    if similar_chunks:
-                        # Build context from retrieved chunks
-                        context_parts = ["[Relevant context from documents:]"]
-                        for chunk in similar_chunks:
-                            context_parts.append(f"\n---\n{chunk.text}")
-                        rag_context = "\n".join(context_parts)
+                    # Build context from retrieved chunks
+                    context_parts = ["[Relevant context from documents:]"]
+                    for chunk in similar_chunks:
+                        context_parts.append(f"\n---\n{chunk.text}")
+                    rag_context = "\n".join(context_parts)
+                    if selected_chunk_ids:
+                        print(f"✅ Using {len(similar_chunks)} selected chunks (requested: {len(selected_chunk_ids)})")
+                    else:
                         print(f"✅ Retrieved {len(similar_chunks)} relevant chunks from RAG")
             except Exception as e:
                 print(f"⚠️  RAG retrieval error: {e}")

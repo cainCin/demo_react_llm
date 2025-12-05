@@ -10,7 +10,7 @@ from datetime import datetime
 
 if TYPE_CHECKING:
     from database.models import VerificationResult, VectorData
-from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer
+from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from pymilvus import MilvusClient
@@ -36,6 +36,7 @@ class Document(Base):
     file_hash = Column(String, nullable=False, unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     chunk_count = Column(Integer, default=0)
+    toc = Column(JSON, nullable=True)  # Table of contents structure
 
 
 class Chunk(Base):
@@ -75,6 +76,21 @@ class DatabaseManager:
         try:
             self.engine = create_engine(db_url, pool_pre_ping=True)
             Base.metadata.create_all(self.engine)
+            
+            # Ensure toc column exists (for backward compatibility)
+            from sqlalchemy import inspect, text
+            inspector = inspect(self.engine)
+            if inspector.has_table("documents"):
+                columns = [col['name'] for col in inspector.get_columns("documents")]
+                if 'toc' not in columns:
+                    try:
+                        with self.engine.connect() as conn:
+                            conn.execute(text("ALTER TABLE documents ADD COLUMN toc JSON"))
+                            conn.commit()
+                        print("✅ Added 'toc' column to documents table")
+                    except Exception as e:
+                        print(f"⚠️  Could not add 'toc' column (may already exist): {e}")
+            
             self.SessionLocal = sessionmaker(bind=self.engine)
             self._postgres_initialized = True
             print(f"✅ Connected to PostgreSQL: {POSTGRES_DB}")

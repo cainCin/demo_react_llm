@@ -3,9 +3,9 @@ import axios from 'axios'
 import { useTheme } from './contexts/ThemeContext'
 import ThemeSwitcher from './components/ThemeSwitcher'
 import SuggestionDropdown from './components/SuggestionDropdown'
-import ContextChunks from './components/ContextChunks'
 import ChunkViewer from './components/ChunkViewer'
 import SessionPanel from './components/SessionPanel'
+import TableOfContents from './components/TableOfContents'
 import { detectSuggestionTrigger } from './utils/suggestionConfig'
 import { searchSuggestions, getSuggestionDisplayInfo } from './services/suggestionService'
 import './App.css'
@@ -23,7 +23,14 @@ function App() {
     }
   ])
   const [selectedChunks, setSelectedChunks] = useState(new Map()) // messageId -> Set of chunk IDs
+  const [selectedTOCChunks, setSelectedTOCChunks] = useState(new Set()) // Set of TOC chunk IDs (format: "docId-chunk-index")
+  const [tocChunkScores, setTocChunkScores] = useState({}) // chunkId -> score
   const [viewingChunk, setViewingChunk] = useState(null) // Currently viewed chunk for display
+  const [tocDocumentIds, setTocDocumentIds] = useState([]) // Array of document IDs for TOC display
+  // Cache: (document_id, chunk_index) -> chunk_id
+  const [chunkIdCache, setChunkIdCache] = useState(new Map()) // Map of "docId-chunkIndex" -> chunk_id
+  const [tocDocuments, setTocDocuments] = useState([]) // Document metadata (id, filename)
+  const [showTOC, setShowTOC] = useState(false) // Toggle TOC panel
   const [sessionId, setSessionId] = useState(() => {
     // Try to load session_id from localStorage on mount
     const saved = localStorage.getItem('chatbox_session_id')
@@ -491,6 +498,40 @@ function App() {
           newMap.set(assistantMessage.id, chunkIds)
           return newMap
         })
+        
+        // Extract all unique document_ids from chunks to show TOC
+        const uniqueDocIds = [...new Set(
+          assistantMessage.chunks
+            .map(chunk => chunk.document_id)
+            .filter(id => id) // Filter out null/undefined
+        )]
+        
+        if (uniqueDocIds.length > 0) {
+          setTocDocumentIds(uniqueDocIds)
+          // Load document metadata (filenames)
+          loadDocumentMetadata(uniqueDocIds)
+          
+          // Cache all chunk IDs from referenced documents for synchronization
+          cacheDocumentChunkIds(uniqueDocIds, assistantMessage.chunks)
+          
+          // Initialize TOC chunk selection and scores from message chunks
+          // All chunks from the message are selected by default in TOC
+          const tocChunkIds = new Set()
+          const tocScores = {}
+          assistantMessage.chunks.forEach(chunk => {
+            if (chunk.document_id && chunk.chunk_index !== undefined && chunk.chunk_index !== null) {
+              const chunkId = `${chunk.document_id}-chunk-${chunk.chunk_index}`
+              tocChunkIds.add(chunkId)
+              if (chunk.score !== undefined && chunk.score !== null) {
+                tocScores[chunkId] = chunk.score
+              }
+            }
+          })
+          setSelectedTOCChunks(tocChunkIds)
+          setTocChunkScores(tocScores)
+          
+          setShowTOC(true)
+        }
       }
     } catch (error) {
       console.error('Error sending message:', error)
@@ -727,6 +768,360 @@ function App() {
     }
   }
 
+  const loadDocumentMetadata = async (documentIds) => {
+    if (!documentIds || documentIds.length === 0) {
+      setTocDocuments([])
+      return
+    }
+    
+    try {
+      const url = API_URL ? `${API_URL}/api/documents/batch` : `/api/documents/batch`
+      const response = await axios.post(
+        url,
+        { document_ids: documentIds },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 5000
+        }
+      )
+      
+      if (response.data && response.data.documents) {
+        setTocDocuments(response.data.documents)
+      }
+    } catch (error) {
+      console.error('Error loading document metadata:', error)
+      // Fallback: create metadata from IDs only
+      setTocDocuments(documentIds.map(id => ({ id, filename: id.substring(0, 8) + '...' })))
+    }
+  }
+
+  const cacheDocumentChunkIds = async (documentIds, messageChunks = []) => {
+    if (!documentIds || documentIds.length === 0) {
+      return
+    }
+    
+    console.log(`📦 Caching chunk IDs for ${documentIds.length} documents`)
+    
+    // First, cache chunk IDs from message chunks (already available)
+    const newCache = new Map(chunkIdCache)
+    messageChunks.forEach(chunk => {
+      if (chunk.document_id && chunk.chunk_index !== undefined && chunk.chunk_index !== null && chunk.id) {
+        const cacheKey = `${chunk.document_id}-${chunk.chunk_index}`
+        newCache.set(cacheKey, String(chunk.id))
+      }
+    })
+    
+    // Then, fetch all chunks for each document to ensure complete cache
+    for (const docId of documentIds) {
+      // Skip if we already have all chunks cached (check if we have chunks for this doc)
+      const hasCachedChunks = Array.from(newCache.keys()).some(key => key.startsWith(`${docId}-`))
+      
+      if (!hasCachedChunks) {
+        try {
+          const url = API_URL ? `${API_URL}/api/documents/${docId}/chunks` : `/api/documents/${docId}/chunks`
+          const response = await axios.get(url, {
+            params: {
+              // Fetch all chunks (no start/end means all)
+            },
+            timeout: 10000
+          })
+          
+          if (response.data && response.data.chunks) {
+            response.data.chunks.forEach(chunk => {
+              if (chunk.id && chunk.chunk_index !== undefined && chunk.chunk_index !== null) {
+                const cacheKey = `${chunk.document_id || docId}-${chunk.chunk_index}`
+                newCache.set(cacheKey, String(chunk.id))
+              }
+            })
+            console.log(`✅ Cached ${response.data.chunks.length} chunk IDs for document ${docId.substring(0, 8)}...`)
+          }
+        } catch (error) {
+          console.error(`Error caching chunks for document ${docId}:`, error)
+        }
+      } else {
+        console.log(`⏭️  Document ${docId.substring(0, 8)}... already has cached chunks`)
+      }
+    }
+    
+    setChunkIdCache(newCache)
+    console.log(`📦 Cache updated: ${newCache.size} chunk IDs total`)
+  }
+
+  const handleTOCChunkSelect = async (tocSelection) => {
+    // Load chunks for the selected TOC section
+    if (!tocSelection.documentId) return
+    
+    try {
+      const url = API_URL ? `${API_URL}/api/documents/${tocSelection.documentId}/chunks` : `/api/documents/${tocSelection.documentId}/chunks`
+      const response = await axios.get(url, {
+        params: {
+          start: tocSelection.chunkStart,
+          end: tocSelection.chunkEnd !== null && tocSelection.chunkEnd !== undefined ? tocSelection.chunkEnd : tocSelection.chunkStart
+        },
+        timeout: 5000
+      })
+      
+      if (response.data && response.data.chunks && response.data.chunks.length > 0) {
+        // Display first chunk in viewer
+        const firstChunk = response.data.chunks[0]
+        setViewingChunk({
+          ...firstChunk,
+          document_id: tocSelection.documentId
+        })
+      }
+    } catch (error) {
+      console.error('Error loading chunks from TOC:', error)
+    }
+  }
+  
+  const handleTOCChunkToggle = (chunkId) => {
+    setSelectedTOCChunks(prev => {
+      const next = new Set(prev)
+      if (next.has(chunkId)) {
+        next.delete(chunkId)
+        // Remove score when deselected
+        setTocChunkScores(prevScores => {
+          const nextScores = { ...prevScores }
+          delete nextScores[chunkId]
+          return nextScores
+        })
+      } else {
+        next.add(chunkId)
+        // Try to find score from message chunks
+        const [docId, , chunkIndex] = chunkId.split('-')
+        const chunkIdx = parseInt(chunkIndex)
+        
+        // Search through all messages for this chunk
+        let foundScore = null
+        messages.forEach(msg => {
+          if (msg.chunks) {
+            const chunk = msg.chunks.find(c => 
+              c.document_id === docId && 
+              c.chunk_index === chunkIdx &&
+              c.score !== undefined && c.score !== null
+            )
+            if (chunk) {
+              foundScore = chunk.score
+            }
+          }
+        })
+        
+        if (foundScore !== null) {
+          setTocChunkScores(prevScores => ({
+            ...prevScores,
+            [chunkId]: foundScore
+          }))
+        }
+      }
+      return next
+    })
+  }
+  
+  const handleTOCResend = async (selectedChunkIds) => {
+    console.log('🔄 handleTOCResend called with:', {
+      selectedChunkIds: Array.from(selectedChunkIds),
+      count: selectedChunkIds.length,
+      type: typeof selectedChunkIds
+    })
+    
+    if (!selectedChunkIds || selectedChunkIds.length === 0) {
+      console.warn('No chunks selected for re-send from TOC')
+      return
+    }
+    
+    // Find the last assistant message with chunks
+    const lastAssistantMessage = [...messages].reverse().find(msg => msg.role === 'assistant' && msg.chunks && msg.chunks.length > 0)
+    if (!lastAssistantMessage) {
+      console.warn('No assistant message with chunks found for re-send')
+      return
+    }
+    
+    // Find the user message that triggered this assistant response
+    const assistantMsgIndex = messages.findIndex(m => m.id === lastAssistantMessage.id)
+    let userMsgId = null
+    if (assistantMsgIndex !== -1) {
+      // Find the user message before this assistant message
+      for (let i = assistantMsgIndex - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          userMsgId = messages[i].id
+          break
+        }
+      }
+    }
+    
+    if (!userMsgId) {
+      console.warn('No user message found for re-send')
+      return
+    }
+    
+    // Convert TOC chunk IDs (format: "docId-chunk-index") to actual chunk IDs
+    // We need to find the actual chunk IDs from the messages or fetch from database
+    const actualChunkIds = []
+    const chunksToFetch = [] // Chunks we need to fetch from database
+    
+    for (const tocChunkId of selectedChunkIds) {
+      // Parse TOC chunk ID: format is "docId-chunk-index"
+      // Split by "-chunk-" to handle docIds that might contain hyphens
+      const parts = tocChunkId.split('-chunk-')
+      if (parts.length === 2) {
+        const docId = parts[0]
+        const chunkIdx = parseInt(parts[1])
+        
+        if (isNaN(chunkIdx)) {
+          console.warn('Invalid chunk index in TOC ID:', tocChunkId)
+          continue
+        }
+        
+        // First, try cache (fastest and most reliable)
+        const cacheKey = `${docId}-${chunkIdx}`
+        const cachedChunkId = chunkIdCache.get(cacheKey)
+        if (cachedChunkId) {
+          actualChunkIds.push(cachedChunkId)
+          console.log(`✅ Found chunk in cache: ${cachedChunkId} (doc: ${docId}, index: ${chunkIdx})`)
+          continue
+        }
+        
+        // Second, try to find in messages
+        let foundChunk = null
+        if (lastAssistantMessage.chunks) {
+          foundChunk = lastAssistantMessage.chunks.find(c => 
+            c.document_id === docId && 
+            c.chunk_index === chunkIdx
+          )
+        }
+        
+        if (!foundChunk) {
+          for (const msg of messages) {
+            if (msg.chunks) {
+              foundChunk = msg.chunks.find(c => 
+                c.document_id === docId && 
+                c.chunk_index === chunkIdx
+              )
+              if (foundChunk) break
+            }
+          }
+        }
+        
+        if (foundChunk && foundChunk.id) {
+          const chunkId = String(foundChunk.id)
+          actualChunkIds.push(chunkId)
+          // Update cache for future use
+          setChunkIdCache(prev => {
+            const next = new Map(prev)
+            next.set(cacheKey, chunkId)
+            return next
+          })
+          console.log(`✅ Found chunk in messages: ${chunkId} (doc: ${docId}, index: ${chunkIdx})`)
+        } else {
+          // Chunk not in cache or messages - need to fetch from database
+          chunksToFetch.push({ docId, chunkIndex: chunkIdx })
+          console.log(`⚠️  Chunk not in cache/messages, will fetch from DB: doc=${docId}, index=${chunkIdx}`)
+        }
+      } else {
+        console.warn('Invalid TOC chunk ID format:', tocChunkId, '(expected format: "docId-chunk-index")')
+      }
+    }
+    
+    // Fetch chunks from database if needed
+    if (chunksToFetch.length > 0) {
+      console.log(`Fetching ${chunksToFetch.length} chunks from database:`, chunksToFetch)
+      try {
+        // Group by document ID to fetch efficiently
+        const chunksByDoc = {}
+        chunksToFetch.forEach(({ docId, chunkIndex }) => {
+          if (!chunksByDoc[docId]) {
+            chunksByDoc[docId] = []
+          }
+          chunksByDoc[docId].push(chunkIndex)
+        })
+        
+        // Fetch chunks for each document
+        for (const [docId, chunkIndices] of Object.entries(chunksByDoc)) {
+          const minIndex = Math.min(...chunkIndices)
+          const maxIndex = Math.max(...chunkIndices)
+          
+          const url = API_URL ? `${API_URL}/api/documents/${docId}/chunks` : `/api/documents/${docId}/chunks`
+          const response = await axios.get(url, {
+            params: {
+              start: minIndex,
+              end: maxIndex
+            },
+            timeout: 5000
+          })
+          
+          if (response.data && response.data.chunks) {
+            console.log(`Fetched ${response.data.chunks.length} chunks from database for doc ${docId} (range: ${minIndex}-${maxIndex})`)
+            // Filter to only the chunks we need
+            const neededChunks = response.data.chunks.filter(c => 
+              chunkIndices.includes(c.chunk_index)
+            )
+            
+            console.log(`Filtered to ${neededChunks.length} needed chunks (requested indices: ${chunkIndices.join(', ')})`)
+            
+            // Add chunk IDs to the list and update cache
+            neededChunks.forEach(chunk => {
+              if (chunk.id) {
+                const chunkId = String(chunk.id)
+                actualChunkIds.push(chunkId)
+                // Update cache for future use
+                const cacheKey = `${chunk.document_id || docId}-${chunk.chunk_index}`
+                setChunkIdCache(prev => {
+                  const next = new Map(prev)
+                  next.set(cacheKey, chunkId)
+                  return next
+                })
+                console.log(`✅ Added chunk ID from DB: ${chunkId} (doc: ${chunk.document_id}, index: ${chunk.chunk_index})`)
+              } else {
+                console.warn(`Chunk missing ID:`, chunk)
+              }
+            })
+          } else {
+            console.warn(`No chunks in response for doc ${docId}`)
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching chunks from database:', error)
+      }
+    }
+    
+    if (actualChunkIds.length === 0) {
+      console.warn('No matching chunk IDs found for re-send. Selected:', selectedChunkIds)
+      console.log('Available chunks in last assistant message:', lastAssistantMessage.chunks?.map(c => ({
+        id: c.id,
+        document_id: c.document_id,
+        chunk_index: c.chunk_index
+      })))
+      return
+    }
+    
+    console.log('Re-sending with TOC chunks:', { 
+      userMessageId: userMsgId, 
+      chunkIds: actualChunkIds,
+      selectedTOCChunks: Array.from(selectedChunkIds),
+      chunkCount: actualChunkIds.length,
+      requestedCount: selectedChunkIds.length,
+      fetchedFromDB: chunksToFetch.length,
+      sampleChunkIds: actualChunkIds.slice(0, 5)
+    })
+    
+    console.log('📤 Sending to backend:', {
+      selectedChunks: actualChunkIds,
+      count: actualChunkIds.length
+    })
+    
+    if (actualChunkIds.length !== selectedChunkIds.length) {
+      console.warn(`Mismatch: requested ${selectedChunkIds.length} chunks but found ${actualChunkIds.length}`)
+      console.log('Chunks that could not be found:', chunksToFetch)
+    }
+    
+    if (actualChunkIds.length === 0) {
+      console.error('No chunk IDs found for re-send. Aborting.')
+      return
+    }
+    
+    sendMessage(null, actualChunkIds, userMsgId)
+  }
+
   return (
     <div className="app-layout">
       <SessionPanel
@@ -734,6 +1129,31 @@ function App() {
         onSessionSelect={handleSessionSelect}
         onNewSession={handleNewSession}
       />
+      {showTOC && tocDocumentIds.length > 0 && (
+        <div className="toc-panel">
+          <div className="toc-panel-header">
+            <h3>Table of Contents</h3>
+            <button
+              className="toc-close-btn"
+              onClick={() => setShowTOC(false)}
+              title="Close TOC"
+            >
+              ×
+            </button>
+          </div>
+          <TableOfContents
+            documentIds={tocDocumentIds}
+            documents={tocDocuments}
+            onChunkSelect={handleTOCChunkSelect}
+            selectedChunkIds={selectedTOCChunks}
+            onToggleChunk={handleTOCChunkToggle}
+            chunkScores={tocChunkScores}
+            onViewChunk={handleViewChunk}
+            onResend={handleTOCResend}
+            isLoading={isLoading}
+          />
+        </div>
+      )}
       <div className="chatbox-container">
       <div className="chatbox-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -803,17 +1223,6 @@ function App() {
                       </div>
                     ))}
                   </div>
-                )}
-                {msg.role === 'assistant' && msg.chunks && msg.chunks.length > 0 && (
-                  <ContextChunks
-                    chunks={msg.chunks}
-                    selectedChunks={selectedChunks.get(messageId) || new Set()}
-                    onToggleChunk={(chunkId) => handleToggleChunk(messageId, chunkId)}
-                    onViewChunk={handleViewChunk}
-                    onResend={handleResendWithChunks}
-                    messageId={messageId}
-                    isLoading={isLoading}
-                  />
                 )}
               </div>
             </div>

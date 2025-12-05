@@ -10,7 +10,8 @@ from .models import (
     SearchResult,
     VerificationResult,
     ResyncResult,
-    DocumentListItem
+    DocumentListItem,
+    TOCItem
 )
 
 from .backup_manager import BackupManager
@@ -29,6 +30,7 @@ __all__ = [
     'VerificationResult',
     'ResyncResult',
     'DocumentListItem',
+    'TOCItem',
     # Backup Manager
     'BackupManager'
 ]

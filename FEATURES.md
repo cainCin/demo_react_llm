@@ -7,8 +7,9 @@ This document provides detailed documentation for key features of the Chatbox Ap
 1. [Session Management](#session-management)
 2. [Reference Chunk Selection](#reference-chunk-selection)
 3. [Chunk Viewer](#chunk-viewer)
-4. [Database Backup & Restore](#database-backup--restore)
-5. [API Reference](#api-reference)
+4. [Table of Contents Viewer](#table-of-contents-viewer)
+5. [Database Backup & Restore](#database-backup--restore)
+6. [API Reference](#api-reference)
 
 ---
 
@@ -331,6 +332,110 @@ If chunk text is missing (e.g., when loading from session logs):
 
 ---
 
+## 📑 Table of Contents Viewer
+
+### Overview
+
+The Table of Contents (TOC) Viewer provides a hierarchical view of document structure, allowing you to navigate and select chunks from referenced documents. It automatically expands sections containing selected chunks for easy discovery.
+
+### Key Features
+
+- **Hierarchical Display**: Shows document structure with nested sections
+- **Multi-Document Support**: Displays TOC for all referenced documents in a collapsible format
+- **Chunk Selection**: Select/deselect chunks directly from the TOC with checkboxes
+- **Confidence Scores**: Displays similarity scores for selected chunks
+- **Auto-Expansion**: Automatically expands sections containing selected chunks
+- **Re-send Integration**: Re-send queries with chunks selected from TOC
+- **Chunk ID Caching**: Automatic caching of all chunk IDs for fast synchronization
+
+### How It Works
+
+#### TOC Display
+
+When chunks are retrieved from documents, the TOC viewer automatically appears:
+
+1. **Document Sections**: Each referenced document has its own collapsible section
+2. **Hierarchical Structure**: TOC items are displayed in a tree structure
+3. **Chunk Indicators**: Each TOC item shows which chunk indices it contains
+4. **Selection State**: Checkboxes indicate which chunks are selected
+
+#### Chunk Selection in TOC
+
+- **Checkbox Selection**: Click checkboxes to select/deselect individual chunks
+- **Parent Checkboxes**: Parent items show selection state (all/some/none selected)
+- **Confidence Scores**: Selected chunks display their similarity scores
+- **Visual Feedback**: Selected chunks are highlighted
+
+#### Auto-Expansion
+
+When chunks are selected (e.g., after a message response):
+
+1. **File Expansion**: Document sections containing selected chunks are automatically expanded
+2. **Item Expansion**: TOC items containing selected chunks are automatically expanded
+3. **Parent Expansion**: Parent items are expanded to make selected items visible
+4. **Hierarchical Navigation**: The full path to selected chunks is visible
+
+#### Chunk ID Caching
+
+For fast synchronization between TOC chunk IDs and database chunk IDs:
+
+1. **Automatic Caching**: When documents are referenced, all chunk IDs are cached
+2. **Cache Format**: Maps `(document_id, chunk_index) -> chunk_id`
+3. **Fast Lookup**: Instant conversion from TOC format to database chunk IDs
+4. **Complete Coverage**: All chunks for referenced documents are cached upfront
+
+#### Re-send with TOC Selection
+
+1. **Select Chunks**: Use checkboxes in TOC to select desired chunks
+2. **Re-send Button**: Click "Re-send" button in TOC header
+3. **Chunk Conversion**: TOC chunk IDs are converted to database chunk IDs using cache
+4. **Query Re-execution**: Original query is re-sent with selected chunks
+
+### TOC Structure
+
+```
+📄 Document: example.py
+  ├─ ▼ Introduction (chunks: #0)
+  │   └─ [✓] Chunk #0 (Score: 85.0%)
+  ├─ ▼ Functions (chunks: #1, #2)
+  │   ├─ [✓] Chunk #1 (Score: 82.0%)
+  │   └─ [ ] Chunk #2
+  └─ ▼ Classes (chunks: #3, #4, #5)
+      ├─ [✓] Chunk #3 (Score: 80.0%)
+      ├─ [ ] Chunk #4
+      └─ [ ] Chunk #5
+```
+
+### Use Cases
+
+1. **Navigating Large Documents**: Quickly find relevant sections in long documents
+2. **Selecting Specific Context**: Choose exactly which chunks to use for re-sending
+3. **Understanding Document Structure**: See how documents are organized
+4. **Reviewing Retrieved Chunks**: Verify which chunks were retrieved and their relevance
+
+### Best Practices
+
+1. **Use Auto-Expansion**: Let the system automatically expand relevant sections
+2. **Review Confidence Scores**: Higher scores indicate more relevant chunks
+3. **Select Strategically**: Choose chunks that best match your query intent
+4. **Use Re-send**: Experiment with different chunk combinations
+
+### Troubleshooting
+
+**Issue**: TOC not showing
+- **Solution**: Ensure documents are uploaded and chunks are retrieved. Check backend logs.
+
+**Issue**: Chunks not selectable
+- **Solution**: Verify chunks have valid `chunk_index` values. Check TOC data structure.
+
+**Issue**: Auto-expansion not working
+- **Solution**: Ensure chunks are properly selected. Check browser console for errors.
+
+**Issue**: Re-send not working
+- **Solution**: Verify chunk ID cache is populated. Check backend logs for chunk retrieval errors.
+
+---
+
 ## 💾 Database Backup & Restore
 
 ### Overview
@@ -564,6 +669,79 @@ Get chunk content by ID from database.
 **Errors:**
 - `404`: Chunk not found
 - `400`: RAG system not enabled
+
+#### `GET /api/documents/{document_id}/chunks`
+
+Get chunks for a document by chunk index range.
+
+**Query Parameters:**
+- `start` (optional): Starting chunk index
+- `end` (optional): Ending chunk index
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "chunks": [
+    {
+      "id": "chunk-id",
+      "text": "Chunk text...",
+      "document_id": "doc-id",
+      "chunk_index": 0
+    }
+  ]
+}
+```
+
+**Note**: If `start` and `end` are not provided, all chunks for the document are returned.
+
+#### `GET /api/documents/{document_id}/toc`
+
+Get table of contents for a document.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "filename": "example.py",
+    "toc": [
+      {
+        "title": "Introduction",
+        "chunk_start": 0,
+        "chunk_end": 0,
+        "children": []
+      }
+    ]
+  }
+}
+```
+
+#### `POST /api/documents/batch`
+
+Get metadata for multiple documents by IDs.
+
+**Request:**
+```json
+{
+  "document_ids": ["doc-id-1", "doc-id-2"]
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "documents": [
+    {
+      "id": "doc-id-1",
+      "filename": "example.py",
+      "chunk_count": 10,
+      "created_at": "2024-01-01T12:00:00"
+    }
+  ]
+}
+```
 
 ### Chat Endpoint (Updated)
 

@@ -75,6 +75,8 @@ cp env.example .env
   - **Note**: Backups automatically use Docker exec when container is available, ensuring version compatibility
   - **Fallback**: If Docker is not available, local `pg_dump` is used (requires matching version)
 
+**Note**: The backend now includes TOC (Table of Contents) extraction and chunk ID caching features. These are automatically enabled when using the RAG system.
+
 ### Step 2: Frontend Setup
 
 ```bash

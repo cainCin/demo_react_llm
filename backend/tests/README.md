@@ -182,9 +182,13 @@ Tests for all FastAPI endpoints:
 
 - Health check endpoints (`/`, `/api/health`, `/health`)
 - Chat endpoint (`POST /api/chat`)
+- Chat with selected chunks (`POST /api/chat` with `selected_chunks`)
 - File upload (`POST /api/upload`)
 - Document management (`GET /api/documents`, `DELETE /api/documents/{id}`)
 - Document search (`GET /api/documents/search`)
+- Table of Contents (`GET /api/documents/{id}/toc`)
+- Chunk endpoints (`GET /api/chunks/{id}`, `GET /api/documents/{id}/chunks`)
+- Batch document retrieval (`POST /api/documents/batch`)
 - Synchronization (`GET /api/documents/sync`, `POST /api/documents/resync`)
 - CORS configuration
 

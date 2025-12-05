@@ -5,18 +5,26 @@ Database operations are handled by DatabaseManager
 """
 import uuid
 import hashlib
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from database import (
     DatabaseManager, Document, Chunk,
     DocumentData, ChunkData, VectorData, SearchResult,
     VerificationResult, ResyncResult
 )
 from config import (
-    CHUNK_SIZE, CHUNK_OVERLAP, CHUNK_MIN_SIZE,
+    CHUNK_SIZE, CHUNK_OVERLAP, CHUNK_MIN_SIZE, EMBEDDING_MAX_LENGTH,
     EMBEDDING_MODEL, EMBEDDING_DIM,
     RAG_TOP_K, RAG_SIMILARITY_THRESHOLD,
     MILVUS_METRIC_TYPE
 )
+
+# Import extractors (following convention: extractors package)
+try:
+    from extractors import ChunkExtractor, chunk_text_toc_aware
+except ImportError:
+    # Fallback if extractors not available
+    ChunkExtractor = None
+    chunk_text_toc_aware = None
 
 
 class RAGSystem:
@@ -39,42 +47,71 @@ class RAGSystem:
     def chunk_text(self, text: str, chunk_size: Optional[int] = None, chunk_overlap: Optional[int] = None) -> List[str]:
         """
         Simple chunking strategy: split text into overlapping chunks
-        Uses config values if parameters not provided
+        Delegates to ChunkExtractor (following convention: delegate to specialized classes)
+        
+        Args:
+            text: Text to chunk
+            chunk_size: Size of each chunk (default: from config)
+            chunk_overlap: Overlap between chunks (default: from config)
+            
+        Returns:
+            List of text chunks
         """
-        chunk_size = chunk_size or CHUNK_SIZE
-        chunk_overlap = chunk_overlap or CHUNK_OVERLAP
-        
-        if not text or len(text) <= chunk_size:
-            return [text] if text else []
-        
-        chunks = []
-        start = 0
-        
-        while start < len(text):
-            end = start + chunk_size
-            chunk = text[start:end]
+        if ChunkExtractor:
+            extractor = ChunkExtractor()
+            return extractor.chunk_text_simple(text, chunk_size, chunk_overlap)
+        else:
+            # Fallback if extractors not available
+            chunk_size = chunk_size or CHUNK_SIZE
+            chunk_overlap = chunk_overlap or CHUNK_OVERLAP
             
-            # Try to break at sentence boundary if not at end
-            if end < len(text):
-                # Look for sentence endings
-                for break_char in ['. ', '.\n', '! ', '!\n', '? ', '?\n', '\n\n']:
-                    last_break = chunk.rfind(break_char)
-                    if last_break > chunk_size * 0.5:  # Only break if we're past halfway
-                        chunk = chunk[:last_break + len(break_char)]
-                        end = start + len(chunk)
-                        break
+            if not text or len(text) <= chunk_size:
+                return [text] if text else []
             
-            # Only add chunk if it meets minimum size requirement
-            chunk_text = chunk.strip()
-            if len(chunk_text) >= CHUNK_MIN_SIZE or start == 0:  # Always include first chunk
-                chunks.append(chunk_text)
+            chunks = []
+            start = 0
             
-            # Move start position with overlap
-            start = end - chunk_overlap
-            if start >= len(text):
-                break
+            while start < len(text):
+                end = start + chunk_size
+                chunk = text[start:end]
+                
+                # Try to break at sentence boundary if not at end
+                if end < len(text):
+                    for break_char in ['. ', '.\n', '! ', '!\n', '? ', '?\n', '\n\n']:
+                        last_break = chunk.rfind(break_char)
+                        if last_break > chunk_size * 0.5:
+                            chunk = chunk[:last_break + len(break_char)]
+                            end = start + len(chunk)
+                            break
+                
+                chunk_text = chunk.strip()
+                if len(chunk_text) >= CHUNK_MIN_SIZE or start == 0:
+                    chunks.append(chunk_text)
+                
+                start = end - chunk_overlap
+                if start >= len(text):
+                    break
+            
+            return chunks
+    
+    def chunk_text_toc_aware(self, text: str, filename: str) -> Tuple[List[str], Optional[List[Dict]]]:
+        """
+        TOC-aware chunking strategy that aligns chunks with TOC sections
+        Delegates to ChunkExtractor (following convention: delegate to specialized classes)
         
-        return chunks
+        Args:
+            text: Document text content
+            filename: Original filename (for format detection)
+            
+        Returns:
+            Tuple of (chunks: List[str], toc: Optional[List[Dict]])
+        """
+        if chunk_text_toc_aware:
+            return chunk_text_toc_aware(text, filename)
+        else:
+            # Fallback to simple chunking if extractors not available
+            chunks = self.chunk_text(text)
+            return chunks, None
     
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding for text using OpenAI or Azure OpenAI"""
@@ -110,9 +147,12 @@ class RAGSystem:
             # Create document ID
             doc_id = str(uuid.uuid4())
             
-            # Chunk the text
-            chunks = self.chunk_text(text)
+            # Chunk the text using TOC-aware strategy (delegates to ChunkExtractor)
+            chunks, toc_data = self.chunk_text_toc_aware(text, filename)
             print(f"Created {len(chunks)} chunks for {filename}")
+            
+            if toc_data:
+                print(f"📑 Extracted {len(toc_data)} TOC items and aligned chunks with sections")
             
             # Store document in PostgreSQL
             document = Document(
@@ -120,7 +160,8 @@ class RAGSystem:
                 filename=filename,
                 full_text=text,
                 file_hash=file_hash,
-                chunk_count=len(chunks)
+                chunk_count=len(chunks),
+                toc=toc_data
             )
             db.add(document)
             
@@ -232,8 +273,9 @@ class RAGSystem:
                             
                             # Filter by similarity threshold
                             if score >= RAG_SIMILARITY_THRESHOLD:
+                                # Use PostgreSQL chunk ID (UUID string), not Milvus int64 ID
                                 search_result = SearchResult(
-                                    id=hit.get("id"),
+                                    id=chunk.id,  # PostgreSQL UUID string, not Milvus int64
                                     document_id=document_id,
                                     chunk_index=chunk_index,
                                     text=chunk.text,  # Retrieved from PostgreSQL

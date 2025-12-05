@@ -94,7 +94,7 @@ class VectorData:
 @dataclass
 class SearchResult:
     """Data class for search results"""
-    id: int
+    id: str  # PostgreSQL UUID string, not Milvus int64
     document_id: str
     chunk_index: int
     text: str
@@ -185,4 +185,29 @@ class DocumentListItem:
             chunk_count=orm_doc.chunk_count,
             created_at=orm_doc.created_at
         )
+
+
+@dataclass
+class TOCItem:
+    """
+    Data class for table of contents items
+    Represents a single item in the table of contents with hierarchical structure
+    """
+    title: str
+    level: int  # Heading level (1-6 for markdown, 1-3 for text)
+    position: int  # Character position in document
+    chunk_start: Optional[int] = None  # Starting chunk index
+    chunk_end: Optional[int] = None  # Ending chunk index
+    children: List['TOCItem'] = field(default_factory=list)  # Nested items
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization and API responses"""
+        return {
+            "title": self.title,
+            "level": self.level,
+            "position": self.position,
+            "chunk_start": self.chunk_start,
+            "chunk_end": self.chunk_end,
+            "children": [child.to_dict() for child in self.children]
+        }
 
