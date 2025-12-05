@@ -223,12 +223,17 @@ class RAGSystem:
         finally:
             db.close()
     
-    def search_similar(self, query: str, top_k: Optional[int] = None) -> List[SearchResult]:
+    def search_similar(self, query: str, top_k: Optional[int] = None, document_ids: Optional[List[str]] = None) -> List[SearchResult]:
         """
         Search for similar chunks using vector similarity
         Returns list of SearchResult objects with metadata
         Text is retrieved from PostgreSQL, not Milvus
         Uses config values if top_k not provided
+        
+        Args:
+            query: Search query text
+            top_k: Number of results to return (default: from config)
+            document_ids: Optional list of document IDs to filter results (for @ mentions)
         """
         top_k = top_k or RAG_TOP_K
         
@@ -236,26 +241,191 @@ class RAGSystem:
             # Generate query embedding
             query_embedding = self.generate_embedding(query)
             
-            # Search in Milvus Lite using database manager (only get IDs and indices, no text)
-            results = self.db_manager.search_vectors(
-                query_vector=query_embedding,
-                top_k=top_k,
-                output_fields=["document_id", "chunk_index"]  # No text field - retrieve from PostgreSQL
-            )
-            
             # Format results and retrieve text from PostgreSQL
             similar_chunks: List[SearchResult] = []
             db = self.db_manager.get_session()
             
             try:
-                if results:
-                    for hit in results:
-                        # Milvus Lite returns results with distance and entity fields
-                        distance = hit.get("distance", 0)
-                        entity = hit.get("entity", {})
+                # If filtering by document_ids, query PostgreSQL first to get chunks
+                if document_ids and len(document_ids) > 0:
+                    print(f"📌 Filtering by {len(document_ids)} documents - querying PostgreSQL first")
+                    
+                    # Get all chunks from mentioned documents
+                    chunks_from_docs = db.query(Chunk).filter(
+                        Chunk.document_id.in_(document_ids)
+                    ).all()
+                    
+                    print(f"   Found {len(chunks_from_docs)} chunks in mentioned documents")
+                    
+                    if not chunks_from_docs:
+                        print(f"⚠️  No chunks found in mentioned documents")
+                        return []
+                    
+                    # Convert chunk UUIDs to int64 for Milvus lookup
+                    chunk_uuid_to_int64 = {}
+                    milvus_ids = []
+                    for chunk in chunks_from_docs:
+                        milvus_id = DatabaseManager._uuid_to_int64(chunk.id)
+                        chunk_uuid_to_int64[milvus_id] = chunk.id
+                        milvus_ids.append(milvus_id)
+                    
+                    print(f"   Querying Milvus for {len(milvus_ids)} specific chunk vectors")
+                    
+                    # Create a set for fast lookup
+                    milvus_ids_set = set(milvus_ids)
+                    
+                    # Since Milvus search doesn't support filtering by IDs directly,
+                    # we'll search with a limit based on the number of chunks we need
+                    # This is still more efficient than searching the entire collection
+                    search_limit = min(len(milvus_ids) * 3, 1000)  # Search enough to likely get all our chunks
+                    
+                    # Use search to get vectors with similarity scores
+                    search_results = self.db_manager.milvus_client.search(
+                        collection_name=self.db_manager.collection_name,
+                        data=[query_embedding],
+                        limit=search_limit,
+                        output_fields=["id", "document_id", "chunk_index"]
+                    )
+                    
+                    # Filter search results to only include chunks from mentioned documents
+                    filtered_results = []
+                    if search_results and len(search_results) > 0:
+                        for hit in search_results[0]:  # search returns list of lists
+                            # Extract ID and metadata from hit
+                            hit_id = None
+                            document_id = None
+                            chunk_index = None
+                            distance = 0
+                            
+                            if isinstance(hit, dict):
+                                hit_id = hit.get("id")
+                                distance = hit.get("distance", 0)
+                                entity = hit.get("entity", {})
+                                if isinstance(entity, dict):
+                                    document_id = entity.get("document_id")
+                                    chunk_index = entity.get("chunk_index")
+                                else:
+                                    document_id = hit.get("document_id")
+                                    chunk_index = hit.get("chunk_index")
+                            else:
+                                hit_id = getattr(hit, "id", None)
+                                distance = getattr(hit, "distance", 0)
+                                document_id = getattr(hit, "document_id", None)
+                                chunk_index = getattr(hit, "chunk_index", None)
+                            
+                            # Check if this chunk is from a mentioned document
+                            if hit_id in milvus_ids_set:
+                                filtered_results.append({
+                                    "id": hit_id,
+                                    "document_id": document_id,
+                                    "chunk_index": chunk_index,
+                                    "distance": distance
+                                })
+                    
+                    if not filtered_results:
+                        print(f"⚠️  No vectors found in Milvus for mentioned documents")
+                        return []
+                    
+                    print(f"   Retrieved {len(filtered_results)} relevant vectors from Milvus")
+                    
+                    # Process filtered results and get chunks from PostgreSQL
+                    chunk_scores = []
+                    for result in filtered_results:
+                        milvus_id = result["id"]
+                        chunk_uuid = chunk_uuid_to_int64.get(milvus_id)
                         
-                        document_id = entity.get("document_id")
-                        chunk_index = entity.get("chunk_index")
+                        if not chunk_uuid:
+                            continue
+                        
+                        # Get the chunk from PostgreSQL
+                        chunk = db.query(Chunk).filter(Chunk.id == chunk_uuid).first()
+                        if not chunk:
+                            continue
+                        
+                        # Get distance from Milvus search result
+                        distance = result.get("distance", 0)
+                        
+                        # Convert distance to similarity score
+                        if MILVUS_METRIC_TYPE == "L2":
+                            score = 1 / (1 + distance) if distance > 0 else 1.0
+                        else:
+                            score = 1 - distance  # For cosine similarity
+                        
+                        # Filter by similarity threshold
+                        if score >= RAG_SIMILARITY_THRESHOLD:
+                            chunk_scores.append({
+                                "chunk": chunk,
+                                "distance": distance,
+                                "score": score
+                            })
+                    
+                    # Sort by score (descending) and take top_k
+                    chunk_scores.sort(key=lambda x: x["score"], reverse=True)
+                    chunk_scores = chunk_scores[:top_k]
+                    
+                    # Convert to SearchResult format
+                    for item in chunk_scores:
+                        chunk = item["chunk"]
+                        search_result = SearchResult(
+                            id=chunk.id,  # PostgreSQL UUID string
+                            document_id=chunk.document_id,
+                            chunk_index=chunk.chunk_index,
+                            text=chunk.text,
+                            distance=item["distance"],
+                            score=item["score"]
+                        )
+                        similar_chunks.append(search_result)
+                    
+                    print(f"✅ Found {len(similar_chunks)} relevant chunks from {len(document_ids)} mentioned documents")
+                    return similar_chunks
+                
+                # Normal search: Search entire Milvus collection
+                search_limit = max(top_k * 2, 10)  # At least 10, or 2x top_k
+                results = self.db_manager.search_vectors(
+                    query_vector=query_embedding,
+                    top_k=search_limit,
+                    output_fields=["document_id", "chunk_index"]  # No text field - retrieve from PostgreSQL
+                )
+                
+                print(f"🔍 Requested {search_limit} results from Milvus (target: {top_k} chunks)")
+                
+                if results:
+                    print(f"🔍 Milvus returned {len(results)} results (requested top_k={top_k})")
+                    print(f"   First result structure: {type(results[0]) if results else 'N/A'}")
+                    if results and len(results) > 0:
+                        print(f"   Sample result keys: {list(results[0].keys()) if isinstance(results[0], dict) else 'Not a dict'}")
+                    
+                    for idx, hit in enumerate(results):
+                        # Milvus Lite returns results - check different possible formats
+                        # Format 1: Direct dict with fields
+                        if isinstance(hit, dict):
+                            # Try direct access first
+                            distance = hit.get("distance", hit.get("id", 0))
+                            document_id = hit.get("document_id")
+                            chunk_index = hit.get("chunk_index")
+                            
+                            # If not found, try entity structure
+                            if not document_id:
+                                entity = hit.get("entity", {})
+                                document_id = entity.get("document_id") if isinstance(entity, dict) else None
+                                chunk_index = entity.get("chunk_index") if isinstance(entity, dict) else chunk_index
+                                if not distance or distance == 0:
+                                    distance = hit.get("distance", 0)
+                        else:
+                            # Format 2: Object with attributes
+                            distance = getattr(hit, "distance", 0)
+                            document_id = getattr(hit, "document_id", None)
+                            chunk_index = getattr(hit, "chunk_index", None)
+                        
+                        if not document_id or chunk_index is None:
+                            print(f"⚠️  Skipping result {idx}: missing document_id or chunk_index")
+                            print(f"   Hit structure: {hit}")
+                            continue
+                        
+                        # Filter by document_ids if provided (for @ mentions)
+                        if document_ids and document_id not in document_ids:
+                            print(f"⏭️  Skipping chunk from non-mentioned document: doc={document_id}")
+                            continue
                         
                         # Retrieve text from PostgreSQL using document_id and chunk_index
                         chunk = db.query(Chunk).filter(
@@ -263,26 +433,48 @@ class RAGSystem:
                             Chunk.chunk_index == chunk_index
                         ).first()
                         
-                        if chunk:
-                            # Convert distance to similarity score
-                            # For L2: lower is better, for cosine: higher is better
-                            if MILVUS_METRIC_TYPE == "L2":
-                                score = 1 / (1 + distance)
-                            else:
-                                score = 1 - distance  # For cosine similarity
+                        if not chunk:
+                            print(f"⚠️  Chunk not found in PostgreSQL: doc={document_id}, index={chunk_index}")
+                            # Continue to next result instead of stopping
+                            continue
+                        
+                        # Convert distance to similarity score
+                        # For L2: lower is better, for cosine: higher is better
+                        if MILVUS_METRIC_TYPE == "L2":
+                            score = 1 / (1 + distance) if distance > 0 else 1.0
+                        else:
+                            score = 1 - distance  # For cosine similarity
+                        
+                        # Filter by similarity threshold
+                        if score >= RAG_SIMILARITY_THRESHOLD:
+                            # Use PostgreSQL chunk ID (UUID string), not Milvus int64 ID
+                            search_result = SearchResult(
+                                id=chunk.id,  # PostgreSQL UUID string, not Milvus int64
+                                document_id=document_id,
+                                chunk_index=chunk_index,
+                                text=chunk.text,  # Retrieved from PostgreSQL
+                                distance=distance,
+                                score=score
+                            )
+                            similar_chunks.append(search_result)
+                            print(f"✅ Added chunk {len(similar_chunks)}/{top_k}: doc={document_id}, index={chunk_index}, score={score:.3f}")
                             
-                            # Filter by similarity threshold
-                            if score >= RAG_SIMILARITY_THRESHOLD:
-                                # Use PostgreSQL chunk ID (UUID string), not Milvus int64 ID
-                                search_result = SearchResult(
-                                    id=chunk.id,  # PostgreSQL UUID string, not Milvus int64
-                                    document_id=document_id,
-                                    chunk_index=chunk_index,
-                                    text=chunk.text,  # Retrieved from PostgreSQL
-                                    distance=distance,
-                                    score=score
-                                )
-                                similar_chunks.append(search_result)
+                            # Stop once we have enough chunks
+                            if len(similar_chunks) >= top_k:
+                                print(f"✅ Reached target of {top_k} chunks, stopping search")
+                                break
+                        else:
+                            print(f"⚠️  Chunk filtered by threshold: score={score:.3f} < threshold={RAG_SIMILARITY_THRESHOLD}")
+                    
+                    print(f"📊 Final result: {len(similar_chunks)} chunks (requested: {top_k})")
+                    if len(similar_chunks) < top_k:
+                        print(f"⚠️  Warning: Only {len(similar_chunks)} chunks returned, expected {top_k}")
+                        print(f"   This may be due to:")
+                        print(f"   - Missing chunks in PostgreSQL (check synchronization)")
+                        print(f"   - Similarity threshold too high (current: {RAG_SIMILARITY_THRESHOLD})")
+                        print(f"   - Not enough vectors in Milvus")
+                else:
+                    print(f"⚠️  No results returned from Milvus search (top_k={top_k})")
             finally:
                 db.close()
             

@@ -791,7 +791,41 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
                         for attachment in last_user_message.attachments:
                             query_text += " " + attachment.get('content', '')[:500]  # Limit query size
                     
-                    similar_chunks = rag_system.search_similar(query_text, top_k=RAG_TOP_K)
+                    # Parse @ mentions to extract document filenames
+                    import re
+                    from sqlalchemy import func
+                    mention_pattern = r'@([^\s@]+)'
+                    mentioned_filenames = re.findall(mention_pattern, last_user_message.content)
+                    
+                    # Resolve filenames to document IDs
+                    mentioned_document_ids = []
+                    if mentioned_filenames:
+                        print(f"📄 Found {len(mentioned_filenames)} document mentions: {mentioned_filenames}")
+                        from database import Document
+                        db = rag_system.db_manager.get_session()
+                        try:
+                            for filename in mentioned_filenames:
+                                # Case-insensitive search for document by filename
+                                doc = db.query(Document).filter(
+                                    func.lower(Document.filename) == func.lower(filename)
+                                ).first()
+                                if doc:
+                                    mentioned_document_ids.append(doc.id)
+                                    print(f"   ✅ Resolved '@{filename}' -> document_id: {doc.id}")
+                                else:
+                                    print(f"   ⚠️  Document not found: '{filename}'")
+                            
+                            if mentioned_document_ids:
+                                print(f"📌 Filtering RAG search to {len(mentioned_document_ids)} mentioned documents")
+                        finally:
+                            db.close()
+                    
+                    # Search with document filter if mentions are present
+                    similar_chunks = rag_system.search_similar(
+                        query_text, 
+                        top_k=RAG_TOP_K,
+                        document_ids=mentioned_document_ids if mentioned_document_ids else None
+                    )
                 
                 # Store chunk info for response (for both selected chunks and search results)
                 if similar_chunks:

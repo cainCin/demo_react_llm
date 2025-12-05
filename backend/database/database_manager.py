@@ -379,14 +379,26 @@ class DatabaseManager:
         # Remove 'text' from output_fields if present (text is not in Milvus)
         output_fields = [f for f in output_fields if f != "text"]
         
-        results = self.milvus_client.search(
-            collection_name=self.collection_name,
-            data=[query_vector],
-            limit=top_k,
-            output_fields=output_fields
-        )
-        
-        return results[0] if results and len(results) > 0 else []
+        try:
+            results = self.milvus_client.search(
+                collection_name=self.collection_name,
+                data=[query_vector],
+                limit=top_k,
+                output_fields=output_fields
+            )
+            
+            # Milvus returns results as a list of lists (one list per query vector)
+            # Since we're searching with one vector, we return the first list
+            if results and len(results) > 0:
+                result_list = results[0]
+                print(f"🔍 Milvus search returned {len(result_list)} results (requested: {top_k})")
+                return result_list
+            else:
+                print(f"⚠️  Milvus search returned empty results (requested: {top_k})")
+                return []
+        except Exception as e:
+            print(f"❌ Error in Milvus search: {e}")
+            return []
     
     def close(self):
         """Close database connections"""
